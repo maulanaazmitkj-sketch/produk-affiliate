@@ -8,56 +8,37 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <style>
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: Arial, sans-serif;
       background: #f5f6f8;
       color: #111827;
     }
-
     .container {
-      max-width: 900px;
+      max-width: 1000px;
       margin: auto;
       padding: 25px 16px 60px;
     }
-
-    .header {
+    .header, .card {
       background: white;
-      padding: 22px;
       border-radius: 16px;
       margin-bottom: 20px;
       box-shadow: 0 3px 15px rgba(0,0,0,.05);
     }
-
-    h1 {
-      margin: 0 0 8px;
-      font-size: 25px;
+    .header { padding: 22px; }
+    .card { padding: 22px; }
+    h1 { margin: 0 0 8px; font-size: 25px; }
+    h2 { margin-top: 0; font-size: 19px; }
+    .subtitle { color: #6b7280; font-size: 14px; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
-
-    .subtitle {
-      color: #6b7280;
-      font-size: 14px;
-    }
-
-    .card {
-      background: white;
-      padding: 22px;
-      border-radius: 16px;
-      margin-bottom: 20px;
-      box-shadow: 0 3px 15px rgba(0,0,0,.05);
-    }
-
-    h2 {
-      margin-top: 0;
-      font-size: 19px;
-    }
-
-    input,
-    textarea {
+    input, textarea {
       width: 100%;
       padding: 13px;
       border: 1px solid #d1d5db;
@@ -66,17 +47,14 @@
       margin-bottom: 14px;
       font-size: 14px;
     }
-
-    textarea {
-      min-height: 100px;
-      resize: vertical;
+    textarea { min-height: 120px; resize: vertical; }
+    label { font-size: 13px; font-weight: bold; }
+    .hint {
+      color: #6b7280;
+      font-size: 12px;
+      margin-top: -8px;
+      margin-bottom: 14px;
     }
-
-    label {
-      font-size: 13px;
-      font-weight: bold;
-    }
-
     button {
       border: 0;
       border-radius: 10px;
@@ -85,121 +63,116 @@
       cursor: pointer;
       font-size: 14px;
     }
-
-    .primary {
-      background: #111827;
-      color: white;
-    }
-
-    .secondary {
-      background: #e5e7eb;
-      color: #111827;
-      margin-left: 8px;
-    }
-
-    .danger {
-      background: #fee2e2;
-      color: #991b1b;
-    }
-
-    .hidden {
-      display: none;
-    }
-
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .primary { background: #111827; color: white; }
+    .secondary { background: #e5e7eb; color: #111827; margin-left: 8px; }
+    .danger { background: #fee2e2; color: #991b1b; }
+    .hidden { display: none; }
     .message {
       padding: 12px;
       border-radius: 10px;
       margin-bottom: 15px;
       font-size: 14px;
     }
-
-    .success {
-      background: #dcfce7;
-      color: #166534;
-    }
-
-    .error {
-      background: #fee2e2;
-      color: #991b1b;
-    }
-
-    .products {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 15px;
-    }
-
-    .product {
-      border: 1px solid #e5e7eb;
-      border-radius: 14px;
-      overflow: hidden;
-      background: white;
-    }
-
-    .product img {
-      width: 100%;
-      height: 210px;
-      object-fit: cover;
-      background: #f3f4f6;
-    }
-
-    .product-info {
-      padding: 14px;
-    }
-
-    .product-name {
-      font-weight: bold;
-      margin-bottom: 7px;
-    }
-
-    .product-date {
-      font-size: 12px;
-      color: #6b7280;
-      margin-bottom: 12px;
-    }
-
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .user-email {
-      font-size: 13px;
-      color: #6b7280;
-    }
-
-    .empty {
-      text-align: center;
-      padding: 30px;
-      color: #6b7280;
-      border: 1px dashed #d1d5db;
-      border-radius: 12px;
-    }
+    .success { background: #dcfce7; color: #166534; }
+    .error { background: #fee2e2; color: #991b1b; }
 
     .file-name {
       font-size: 12px;
       color: #6b7280;
       margin-top: -8px;
       margin-bottom: 14px;
+      white-space: pre-line;
+    }
+    .preview-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 4px 0 16px;
+    }
+    .preview-row img {
+      width: 110px;
+      height: 110px;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
     }
 
-    @media (max-width: 600px) {
-      .container {
-        padding: 12px;
-      }
+    .products {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 15px;
+    }
+    .product {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      overflow: hidden;
+      background: white;
+    }
+    .product-main-image {
+      width: 100%;
+      height: 220px;
+      object-fit: cover;
+      background: #f3f4f6;
+    }
+    .product-info { padding: 14px; }
+    .product-name { font-weight: bold; margin-bottom: 7px; }
+    .product-date {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 12px;
+    }
+    .metrics-box {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .metrics-title {
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    .metrics-text {
+      font-size: 12px;
+      color: #374151;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .metrics-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 9px;
+    }
+    .metrics-images img {
+      width: 95px;
+      height: 95px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      cursor: pointer;
+    }
+    .empty {
+      text-align: center;
+      padding: 30px;
+      color: #6b7280;
+      border: 1px dashed #d1d5db;
+      border-radius: 12px;
+      grid-column: 1 / -1;
+    }
+    .user-email { font-size: 13px; color: #6b7280; }
 
-      .card {
-        padding: 16px;
-      }
+    @media (max-width: 600px) {
+      .container { padding: 12px; }
+      .card { padding: 16px; }
+      .products { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 
 <body>
-
 <div class="container">
 
   <div class="header">
@@ -210,719 +183,499 @@
           Simpan produk yang pernah kamu test supaya tidak beli produk yang sama lagi.
         </div>
       </div>
-
-      <button id="logoutBtn" class="secondary hidden">
-        Logout
-      </button>
+      <button id="logoutBtn" class="secondary hidden">Logout</button>
     </div>
   </div>
 
   <!-- LOGIN -->
   <div id="authCard" class="card">
-
     <h2>🔐 Login</h2>
-
     <div id="authMessage"></div>
 
     <label>Email</label>
-    <input
-      type="email"
-      id="email"
-      placeholder="email kamu"
-    >
+    <input type="email" id="email" placeholder="email kamu">
 
     <label>Password</label>
-    <input
-      type="password"
-      id="password"
-      placeholder="minimal 6 karakter"
-    >
+    <input type="password" id="password" placeholder="minimal 6 karakter">
 
-    <button id="loginBtn" class="primary">
-      Login
-    </button>
-
-    <button id="signupBtn" class="secondary">
-      Buat Akun
-    </button>
-
+    <button id="loginBtn" class="primary">Login</button>
+    <button id="signupBtn" class="secondary">Buat Akun</button>
   </div>
-
 
   <!-- APP -->
   <div id="app" class="hidden">
 
     <div class="card">
-
       <div class="topbar">
         <h2>➕ Tambah Produk</h2>
-
         <div class="user-email" id="userEmail"></div>
       </div>
 
       <div id="productMessage"></div>
 
       <label>Foto / Screenshot Produk</label>
-
-      <input
-        type="file"
-        id="productImage"
-        accept="image/*"
-      >
-
-      <div id="fileName" class="file-name"></div>
+      <input type="file" id="productImage" accept="image/*">
+      <div id="productFileName" class="file-name"></div>
+      <div id="productPreview" class="preview-row"></div>
 
       <label>Nama Produk</label>
+      <input type="text" id="productName" placeholder="Contoh: Lampu Camping Portable">
 
-      <input
-        type="text"
-        id="productName"
-        placeholder="Contoh: Lampu Camping Portable"
-      >
-
-      <label>Metrics / Data Produk (opsional)</label>
-
-      <textarea
-        id="metrics"
-        placeholder="Contoh:
+      <label>Metrics / Data Produk</label>
+      <textarea id="metrics" placeholder="Contoh:
 Harga: 79.000
 GMV: 250 juta
 Terjual: 12.000
 Creator: 850
-Komisi: 5%"
-      ></textarea>
+Komisi: 5%"></textarea>
 
-      <label>Catatan (opsional)</label>
+      <label>Screenshot Metrics / Data</label>
+      <input type="file" id="metricsImages" accept="image/*" multiple>
+      <div class="hint">Bisa pilih 1 atau beberapa screenshot sekaligus.</div>
+      <div id="metricsFileName" class="file-name"></div>
+      <div id="metricsPreview" class="preview-row"></div>
 
-      <textarea
-        id="notes"
-        placeholder="Contoh: Pernah test 2 video, view rendah."
-      ></textarea>
+      <label>Catatan</label>
+      <textarea id="notes" placeholder="Contoh: Pernah test 2 video, view rendah."></textarea>
 
-      <button id="saveBtn" class="primary">
-        💾 Simpan Produk
-      </button>
-
+      <button id="saveBtn" class="primary">💾 Simpan Produk</button>
     </div>
 
-
     <div class="card">
-
       <div class="topbar">
         <h2>📦 Produk yang Sudah Disimpan</h2>
-
-        <button id="refreshBtn" class="secondary">
-          🔄 Refresh
-        </button>
+        <button id="refreshBtn" class="secondary">🔄 Refresh</button>
       </div>
 
       <div id="products" class="products"></div>
-
     </div>
 
   </div>
-
 </div>
 
-
 <script>
-
-  /*
-  =====================================================
-  SUPABASE CONFIG
-  =====================================================
-  */
-
-  const SUPABASE_URL =
-    "https://dyaaypnctyekibmlzali.supabase.co";
-
-  /*
-  GANTI bagian di bawah dengan PUBLISHABLE KEY
-  dari Supabase kamu.
-  JANGAN gunakan Secret Key.
-  */
-
+  const SUPABASE_URL = "https://dyaaypnctyekibmlzali.supabase.co";
   const SUPABASE_PUBLISHABLE_KEY =
     "sb_publishable_T_hZuh-AjSEeJjh7wziTxg_grGH1XVj";
-
 
   const supabaseClient = supabase.createClient(
     SUPABASE_URL,
     SUPABASE_PUBLISHABLE_KEY
   );
 
-
-  /*
-  =====================================================
-  ELEMENT
-  =====================================================
-  */
+  const PRODUCTION_URL =
+    "https://maulanaazmitkj-sketch.github.io/produk-affiliate/";
 
   const authCard = document.getElementById("authCard");
   const app = document.getElementById("app");
-
   const emailInput = document.getElementById("email");
   const passwordInput = document.getElementById("password");
-
   const loginBtn = document.getElementById("loginBtn");
   const signupBtn = document.getElementById("signupBtn");
   const logoutBtn = document.getElementById("logoutBtn");
-
   const authMessage = document.getElementById("authMessage");
 
   const productImage = document.getElementById("productImage");
   const productName = document.getElementById("productName");
   const metrics = document.getElementById("metrics");
+  const metricsImages = document.getElementById("metricsImages");
   const notes = document.getElementById("notes");
-
   const saveBtn = document.getElementById("saveBtn");
   const productMessage = document.getElementById("productMessage");
 
   const productsContainer = document.getElementById("products");
   const refreshBtn = document.getElementById("refreshBtn");
-
   const userEmail = document.getElementById("userEmail");
-  const fileName = document.getElementById("fileName");
 
-
-  /*
-  =====================================================
-  HELPER MESSAGE
-  =====================================================
-  */
+  const productFileName = document.getElementById("productFileName");
+  const productPreview = document.getElementById("productPreview");
+  const metricsFileName = document.getElementById("metricsFileName");
+  const metricsPreview = document.getElementById("metricsPreview");
 
   function showMessage(element, text, type) {
-
     element.innerHTML =
-      `<div class="message ${type}">${text}</div>`;
-
+      `<div class="message ${type}">${escapeHtml(text)}</div>`;
   }
 
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-  /*
-  =====================================================
-  FILE NAME
-  =====================================================
-  */
+  function previewFiles(input, previewContainer, nameContainer, single = false) {
+    previewContainer.innerHTML = "";
+    nameContainer.textContent = "";
 
-  productImage.addEventListener("change", function() {
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
 
-    if (productImage.files.length > 0) {
+    nameContainer.textContent = single
+      ? "File: " + files[0].name
+      : "File dipilih:\n" + files.map(f => "• " + f.name).join("\n");
 
-      fileName.textContent =
-        "File: " + productImage.files[0].name;
+    files.forEach(file => {
+      if (!file.type.startsWith("image/")) return;
+      const img = document.createElement("img");
+      img.alt = file.name;
+      img.src = URL.createObjectURL(file);
+      previewContainer.appendChild(img);
+    });
+  }
 
-    } else {
-
-      fileName.textContent = "";
-
-    }
-
+  productImage.addEventListener("change", () => {
+    previewFiles(productImage, productPreview, productFileName, true);
   });
 
+  metricsImages.addEventListener("change", () => {
+    previewFiles(metricsImages, metricsPreview, metricsFileName, false);
+  });
 
-  /*
-  =====================================================
-  SIGN UP
-  =====================================================
-  */
-
-  signupBtn.addEventListener("click", async function() {
-
+  signupBtn.addEventListener("click", async () => {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
 
     if (!email || !password) {
-
-      showMessage(
-        authMessage,
-        "Masukkan email dan password.",
-        "error"
-      );
-
+      showMessage(authMessage, "Masukkan email dan password.", "error");
       return;
     }
 
     if (password.length < 6) {
-
-      showMessage(
-        authMessage,
-        "Password minimal 6 karakter.",
-        "error"
-      );
-
+      showMessage(authMessage, "Password minimal 6 karakter.", "error");
       return;
     }
 
     signupBtn.disabled = true;
 
-    const { error } =
-      await supabaseClient.auth.signUp({
-        email: email,
-        password: password
-      });
+    const { error } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: PRODUCTION_URL
+      }
+    });
 
     signupBtn.disabled = false;
 
     if (error) {
-
-      showMessage(
-        authMessage,
-        error.message,
-        "error"
-      );
-
+      showMessage(authMessage, error.message, "error");
       return;
     }
 
     showMessage(
       authMessage,
-      "Akun berhasil dibuat. Kalau diminta konfirmasi email, buka email kamu lalu klik link konfirmasi.",
+      "Akun berhasil dibuat. Cek email dan klik link konfirmasi terbaru.",
       "success"
     );
-
   });
 
-
-  /*
-  =====================================================
-  LOGIN
-  =====================================================
-  */
-
-  loginBtn.addEventListener("click", async function() {
-
+  loginBtn.addEventListener("click", async () => {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
 
     if (!email || !password) {
-
-      showMessage(
-        authMessage,
-        "Masukkan email dan password.",
-        "error"
-      );
-
+      showMessage(authMessage, "Masukkan email dan password.", "error");
       return;
     }
 
     loginBtn.disabled = true;
 
-    const { error } =
-      await supabaseClient.auth.signInWithPassword({
-        email: email,
-        password: password
-      });
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email,
+      password
+    });
 
     loginBtn.disabled = false;
 
     if (error) {
-
-      showMessage(
-        authMessage,
-        error.message,
-        "error"
-      );
-
+      showMessage(authMessage, error.message, "error");
       return;
     }
 
     authMessage.innerHTML = "";
-
   });
 
-
-  /*
-  =====================================================
-  LOGOUT
-  =====================================================
-  */
-
-  logoutBtn.addEventListener("click", async function() {
-
+  logoutBtn.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
-
   });
 
-
-  /*
-  =====================================================
-  AUTH STATE
-  =====================================================
-  */
-
-  supabaseClient.auth.onAuthStateChange(
-    async function(event, session) {
-
-      if (session) {
-
-        authCard.classList.add("hidden");
-        app.classList.remove("hidden");
-        logoutBtn.classList.remove("hidden");
-
-        userEmail.textContent =
-          session.user.email;
-
-        await loadProducts();
-
-      } else {
-
-        authCard.classList.remove("hidden");
-        app.classList.add("hidden");
-        logoutBtn.classList.add("hidden");
-
-      }
-
+  supabaseClient.auth.onAuthStateChange(async (event, session) => {
+    if (session) {
+      authCard.classList.add("hidden");
+      app.classList.remove("hidden");
+      logoutBtn.classList.remove("hidden");
+      userEmail.textContent = session.user.email;
+      await loadProducts();
+    } else {
+      authCard.classList.remove("hidden");
+      app.classList.add("hidden");
+      logoutBtn.classList.add("hidden");
     }
-  );
+  });
 
+  async function uploadImage(file, userId, prefix) {
+    const extension = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const safeExtension = extension.replace(/[^a-z0-9]/gi, "") || "jpg";
 
-  /*
-  =====================================================
-  SAVE PRODUCT
-  =====================================================
-  */
+    const filePath =
+      userId + "/" +
+      prefix + "-" +
+      Date.now() + "-" +
+      Math.random().toString(36).substring(2) +
+      "." + safeExtension;
 
-  saveBtn.addEventListener("click", async function() {
+    const { error: uploadError } = await supabaseClient
+      .storage
+      .from("product-images")
+      .upload(filePath, file);
 
-    const name =
-      productName.value.trim();
+    if (uploadError) throw uploadError;
 
-    const imageFile =
-      productImage.files[0];
+    const { data } = supabaseClient
+      .storage
+      .from("product-images")
+      .getPublicUrl(filePath);
 
-    const metricText =
-      metrics.value.trim();
+    return data.publicUrl;
+  }
 
-    const noteText =
-      notes.value.trim();
-
+  saveBtn.addEventListener("click", async () => {
+    const name = productName.value.trim();
+    const imageFile = productImage.files[0];
+    const metricText = metrics.value.trim();
+    const metricFiles = Array.from(metricsImages.files || []);
+    const noteText = notes.value.trim();
 
     if (!name) {
-
-      showMessage(
-        productMessage,
-        "Nama produk wajib diisi.",
-        "error"
-      );
-
+      showMessage(productMessage, "Nama produk wajib diisi.", "error");
       return;
     }
-
 
     if (!imageFile) {
-
-      showMessage(
-        productMessage,
-        "Foto produk wajib dipilih.",
-        "error"
-      );
-
+      showMessage(productMessage, "Foto produk wajib dipilih.", "error");
       return;
     }
-
 
     saveBtn.disabled = true;
     saveBtn.textContent = "⏳ Menyimpan...";
 
-
     try {
-
-      /*
-      -------------------------------
-      1. CEK USER
-      -------------------------------
-      */
-
       const {
-        data: {
-          user
-        }
+        data: { user }
       } = await supabaseClient.auth.getUser();
 
+      if (!user) throw new Error("Session login tidak ditemukan.");
 
-      if (!user) {
+      // Upload foto utama produk
+      const imageUrl = await uploadImage(
+        imageFile,
+        user.id,
+        "product"
+      );
 
-        throw new Error(
-          "Session login tidak ditemukan."
+      // Upload semua screenshot metrics
+      const metricImageUrls = [];
+      for (const file of metricFiles) {
+        if (!file.type.startsWith("image/")) continue;
+
+        const url = await uploadImage(
+          file,
+          user.id,
+          "metrics"
         );
 
+        metricImageUrls.push(url);
       }
 
+      const { error: insertError } = await supabaseClient
+        .from("products")
+        .insert({
+          name: name,
+          image_url: imageUrl,
+          metrics: {
+            raw: metricText,
+            images: metricImageUrls
+          },
+          notes: noteText
+        });
 
-      /*
-      -------------------------------
-      2. BUAT NAMA FILE
-      -------------------------------
-      */
-
-      const fileExtension =
-        imageFile.name.split(".").pop();
-
-      const filePath =
-        user.id +
-        "/" +
-        Date.now() +
-        "-" +
-        Math.random()
-          .toString(36)
-          .substring(2) +
-        "." +
-        fileExtension;
-
-
-      /*
-      -------------------------------
-      3. UPLOAD FOTO
-      -------------------------------
-      */
-
-      const {
-        error: uploadError
-      } =
-        await supabaseClient
-          .storage
-          .from("product-images")
-          .upload(
-            filePath,
-            imageFile
-          );
-
-
-      if (uploadError) {
-
-        throw uploadError;
-
-      }
-
-
-      /*
-      -------------------------------
-      4. AMBIL URL FOTO
-      -------------------------------
-      */
-
-      const {
-        data: publicUrlData
-      } =
-        supabaseClient
-          .storage
-          .from("product-images")
-          .getPublicUrl(filePath);
-
-
-      const imageUrl =
-        publicUrlData.publicUrl;
-
-
-      /*
-      -------------------------------
-      5. SIMPAN DATA PRODUK
-      -------------------------------
-      */
-
-      const {
-        error: insertError
-      } =
-        await supabaseClient
-          .from("products")
-          .insert({
-
-            name: name,
-
-            image_url: imageUrl,
-
-            metrics: {
-              raw: metricText
-            },
-
-            notes: noteText
-
-          });
-
-
-      if (insertError) {
-
-        throw insertError;
-
-      }
-
-
-      /*
-      -------------------------------
-      6. RESET FORM
-      -------------------------------
-      */
+      if (insertError) throw insertError;
 
       productImage.value = "";
       productName.value = "";
       metrics.value = "";
+      metricsImages.value = "";
       notes.value = "";
-      fileName.textContent = "";
 
+      productFileName.textContent = "";
+      metricsFileName.textContent = "";
+      productPreview.innerHTML = "";
+      metricsPreview.innerHTML = "";
 
       showMessage(
         productMessage,
-        "✅ Produk berhasil disimpan!",
+        "✅ Produk + data metrics berhasil disimpan!",
         "success"
       );
 
-
       await loadProducts();
 
-
     } catch (error) {
-
       console.error(error);
-
       showMessage(
         productMessage,
-        "Gagal menyimpan: " +
-        error.message,
+        "Gagal menyimpan: " + error.message,
         "error"
       );
-
     }
-
 
     saveBtn.disabled = false;
     saveBtn.textContent = "💾 Simpan Produk";
-
   });
 
+  function getMetricImages(product) {
+    const metricsData = product.metrics || {};
 
-  /*
-  =====================================================
-  LOAD PRODUCTS
-  =====================================================
-  */
+    if (Array.isArray(metricsData.images)) {
+      return metricsData.images.filter(Boolean);
+    }
+
+    if (metricsData.image_url) {
+      return [metricsData.image_url];
+    }
+
+    return [];
+  }
+
+  function getMetricText(product) {
+    const metricsData = product.metrics || {};
+
+    if (typeof metricsData === "string") {
+      return metricsData;
+    }
+
+    return metricsData.raw || "";
+  }
 
   async function loadProducts() {
-
     productsContainer.innerHTML =
       `<div class="empty">⏳ Memuat produk...</div>`;
 
-
-    const {
-      data,
-      error
-    } =
-      await supabaseClient
-        .from("products")
-        .select("*")
-        .order(
-          "created_at",
-          {
-            ascending: false
-          }
-        );
-
+    const { data, error } = await supabaseClient
+      .from("products")
+      .select("*")
+      .order("created_at", { ascending: false });
 
     if (error) {
-
       productsContainer.innerHTML =
-        `<div class="empty">
-          Gagal mengambil data: ${error.message}
-        </div>`;
-
+        `<div class="empty">Gagal mengambil data: ${escapeHtml(error.message)}</div>`;
       return;
-
     }
 
-
     if (!data || data.length === 0) {
-
       productsContainer.innerHTML =
         `<div class="empty">
           Belum ada produk.<br><br>
           Tambahkan produk pertama kamu di atas.
         </div>`;
-
       return;
-
     }
-
 
     productsContainer.innerHTML = "";
 
-
-    data.forEach(function(product) {
-
-      const card =
-        document.createElement("div");
-
+    data.forEach(product => {
+      const card = document.createElement("div");
       card.className = "product";
 
+      const image = document.createElement("img");
+      image.className = "product-main-image";
+      image.src = product.image_url || "";
+      image.alt = product.name || "Produk";
 
-      const image =
-        document.createElement("img");
+      const info = document.createElement("div");
+      info.className = "product-info";
 
-      image.src =
-        product.image_url || "";
+      const name = document.createElement("div");
+      name.className = "product-name";
+      name.textContent = product.name || "-";
 
-      image.alt =
-        product.name;
-
-
-      const info =
-        document.createElement("div");
-
-      info.className =
-        "product-info";
-
-
-      const name =
-        document.createElement("div");
-
-      name.className =
-        "product-name";
-
-      name.textContent =
-        product.name;
-
-
-      const date =
-        document.createElement("div");
-
-      date.className =
-        "product-date";
-
+      const date = document.createElement("div");
+      date.className = "product-date";
       date.textContent =
         "Ditambahkan: " +
-        new Date(
-          product.created_at
-        ).toLocaleDateString(
-          "id-ID"
-        );
-
+        new Date(product.created_at).toLocaleDateString("id-ID");
 
       info.appendChild(name);
       info.appendChild(date);
 
+      const metricText = getMetricText(product);
+      const metricUrls = getMetricImages(product);
+
+      if (metricText || metricUrls.length) {
+        const box = document.createElement("div");
+        box.className = "metrics-box";
+
+        const title = document.createElement("div");
+        title.className = "metrics-title";
+        title.textContent = "📊 Metrics / Data";
+
+        box.appendChild(title);
+
+        if (metricText) {
+          const text = document.createElement("div");
+          text.className = "metrics-text";
+          text.textContent = metricText;
+          box.appendChild(text);
+        }
+
+        if (metricUrls.length) {
+          const gallery = document.createElement("div");
+          gallery.className = "metrics-images";
+
+          metricUrls.forEach(url => {
+            const metricImg = document.createElement("img");
+            metricImg.src = url;
+            metricImg.alt = "Screenshot metrics";
+            metricImg.title = "Klik untuk membuka gambar";
+            metricImg.addEventListener("click", () => {
+              window.open(url, "_blank");
+            });
+            gallery.appendChild(metricImg);
+          });
+
+          box.appendChild(gallery);
+        }
+
+        info.appendChild(box);
+      }
+
+      if (product.notes) {
+        const notesBox = document.createElement("div");
+        notesBox.className = "metrics-box";
+
+        const notesTitle = document.createElement("div");
+        notesTitle.className = "metrics-title";
+        notesTitle.textContent = "📝 Catatan";
+
+        const notesText = document.createElement("div");
+        notesText.className = "metrics-text";
+        notesText.textContent = product.notes;
+
+        notesBox.appendChild(notesTitle);
+        notesBox.appendChild(notesText);
+        info.appendChild(notesBox);
+      }
 
       card.appendChild(image);
       card.appendChild(info);
-
-
       productsContainer.appendChild(card);
-
     });
-
   }
 
-
-  /*
-  =====================================================
-  REFRESH
-  =====================================================
-  */
-
-  refreshBtn.addEventListener(
-    "click",
-    loadProducts
-  );
-
-
+  refreshBtn.addEventListener("click", loadProducts);
 </script>
 
 </body>
