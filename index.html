@@ -312,7 +312,10 @@
       </div>
 
       <div id="productMessage"></div>
-      <div class="storage-note">🗜️ Foto akan otomatis dikecilkan & dikompres sebelum disimpan agar database kuat untuk ribuan produk.</div>
+      <div class="storage-note">
+        🗜️ Foto otomatis di-resize + WebP + kompresi bertahap sebelum upload.
+        Foto utama ditargetkan ≤450 KB dan screenshot metrics ≤550 KB agar storage tetap hemat untuk ribuan produk.
+      </div>
 
       <label>Foto / Screenshot Produk</label>
       <input type="file" id="productImage" accept="image/*">
@@ -992,7 +995,9 @@ Komisi: 5%"></textarea>
 
     const maxWidth = options.maxWidth || 1000;
     const maxHeight = options.maxHeight || 1000;
-    const quality = options.quality ?? 0.78;
+    const initialQuality = options.quality ?? 0.76;
+    const minQuality = options.minQuality ?? 0.55;
+    const maxBytes = options.maxBytes ?? 450 * 1024;
 
     const img = await createImageElement(file);
 
@@ -1011,13 +1016,24 @@ Komisi: 5%"></textarea>
       canvas.height = height;
 
       const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, 0, 0, width, height);
 
-      const blob = await new Promise(resolve =>
-        canvas.toBlob(resolve, "image/webp", quality)
-      );
+      // Kompresi bertahap sampai ukuran file masuk target.
+      let quality = initialQuality;
+      let blob = null;
 
-      if (!blob) throw new Error("Gagal mengompres gambar.");
+      for (let attempt = 0; attempt < 6; attempt++) {
+        blob = await new Promise(resolve =>
+          canvas.toBlob(resolve, "image/webp", quality)
+        );
+
+        if (!blob) throw new Error("Gagal mengompres gambar.");
+        if (blob.size <= maxBytes || quality <= minQuality) break;
+
+        quality = Math.max(minQuality, quality - 0.06);
+      }
 
       return new File(
         [blob],
@@ -1030,6 +1046,37 @@ Komisi: 5%"></textarea>
   }
 
   async function uploadImage(file, userId, prefix, compressionOptions = {}) {
+    const compressedFile = await compressImage(file, compressionOptions);
+    const safeExtension = "webp";
+
+    const filePath =
+      userId + "/" +
+      prefix + "-" +
+      Date.now() + "-" +
+      Math.random().toString(36).substring(2) +
+      "." + safeExtension;
+
+    const { error: uploadError } = await supabaseClient
+      .storage
+      .from("product-images")
+      .upload(filePath, compressedFile, {
+        contentType: compressedFile.type,
+        upsert: false
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabaseClient
+      .storage
+      .from("product-images")
+      .getPublicUrl(filePath);
+
+    return {
+      url: data.publicUrl,
+      originalBytes: file?.size || 0,
+      compressedBytes: compressedFile?.size || 0
+    };
+  }(file, userId, prefix, compressionOptions = {}) {
     const compressedFile = await compressImage(file, compressionOptions);
     const safeExtension = "webp";
 
@@ -1087,31 +1134,57 @@ Komisi: 5%"></textarea>
       if (!user) throw new Error("Session login tidak ditemukan.");
 
       // Upload foto utama produk
-      const imageUrl = await uploadImage(
+      const productUpload = await uploadImage(
         imageFile,
         user.id,
         "product",
-        { maxWidth: 1000, maxHeight: 1000, quality: 0.80 }
+        {
+          maxWidth: 1000,
+          maxHeight: 1000,
+          quality: 0.76,
+          minQuality: 0.55,
+          maxBytes: 450 * 1024
+        }
       );
+
+      const imageUrl = productUpload.url;
 
       // Upload semua screenshot metrics
       const metricImageUrls = [];
+      let totalOriginalBytes = productUpload.originalBytes;
+      let totalCompressedBytes = productUpload.compressedBytes;
+
       for (const file of metricFiles) {
         if (!file.type.startsWith("image/")) continue;
 
-        const url = await uploadImage(
+        const metricUpload = await uploadImage(
           file,
           user.id,
           "metrics",
-          { maxWidth: 1600, maxHeight: 1600, quality: 0.82 }
+          {
+            maxWidth: 1400,
+            maxHeight: 1400,
+            quality: 0.72,
+            minQuality: 0.52,
+            maxBytes: 550 * 1024
+          }
         );
 
-        metricImageUrls.push(url);
+        metricImageUrls.push(metricUpload.url);
+        totalOriginalBytes += metricUpload.originalBytes;
+        totalCompressedBytes += metricUpload.compressedBytes;
       }
+
+      const compressionPercent = totalOriginalBytes
+        ? Math.max(
+            0,
+            Math.round((1 - totalCompressedBytes / totalOriginalBytes) * 100)
+          )
+        : 0;
 
       showMessage(
         productMessage,
-        "🤖 Membuat indeks visual produk...",
+        `🗜️ Foto berhasil dikompres. Ukuran berkurang sekitar ${compressionPercent}%. Membuat indeks visual produk...`,
         "success"
       );
 
@@ -1268,4 +1341,69 @@ Komisi: 5%"></textarea>
 
       if (metricText || metricUrls.length) {
         const box = document.createElement("div");
-      
+        box.className = "metrics-box";
+
+        const title = document.createElement("div");
+        title.className = "metrics-title";
+        title.textContent = "📊 Metrics / Data";
+
+        box.appendChild(title);
+
+        if (metricText) {
+          const text = document.createElement("div");
+          text.className = "metrics-text";
+          text.textContent = metricText;
+          box.appendChild(text);
+        }
+
+        if (metricUrls.length) {
+          const gallery = document.createElement("div");
+          gallery.className = "metrics-images";
+
+          metricUrls.forEach(url => {
+            const metricImg = document.createElement("img");
+            metricImg.src = url;
+            metricImg.alt = "Screenshot metrics";
+            metricImg.title = "Klik untuk membuka gambar";
+            metricImg.addEventListener("click", () => {
+              window.open(url, "_blank");
+            });
+            gallery.appendChild(metricImg);
+          });
+
+          box.appendChild(gallery);
+        }
+
+        info.appendChild(box);
+      }
+
+      if (product.notes) {
+        const notesBox = document.createElement("div");
+        notesBox.className = "metrics-box";
+
+        const notesTitle = document.createElement("div");
+        notesTitle.className = "metrics-title";
+        notesTitle.textContent = "📝 Catatan";
+
+        const notesText = document.createElement("div");
+        notesText.className = "metrics-text";
+        notesText.textContent = product.notes;
+
+        notesBox.appendChild(notesTitle);
+        notesBox.appendChild(notesText);
+        info.appendChild(notesBox);
+      }
+
+      card.appendChild(image);
+      card.appendChild(info);
+      productsContainer.appendChild(card);
+    });
+  }
+
+  refreshBtn.addEventListener("click", loadProducts);
+  productSearch.addEventListener("input", () => loadProducts());
+  savedCategoryFilter.addEventListener("change", () => loadProducts());
+</script>
+
+</body>
+</html>
