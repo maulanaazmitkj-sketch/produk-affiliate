@@ -216,6 +216,37 @@
       background: #f9fafb;
       line-height: 1.5;
     }
+    .category-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    select, .search-input {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      margin-top: 7px;
+      margin-bottom: 14px;
+      font-size: 14px;
+      background: white;
+    }
+    .filter-bar {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .category-badge {
+      display: inline-block;
+      font-size: 11px;
+      background: #eef2ff;
+      color: #3730a3;
+      border-radius: 999px;
+      padding: 4px 8px;
+      margin-bottom: 8px;
+      font-weight: bold;
+    }
     .ai-note {
       font-size: 12px;
       color: #6b7280;
@@ -227,6 +258,7 @@
       .container { padding: 12px; }
       .card { padding: 16px; }
       .products { grid-template-columns: 1fr; }
+      .category-row, .filter-bar { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -280,6 +312,24 @@
       <label>Nama Produk</label>
       <input type="text" id="productName" placeholder="Contoh: Lampu Camping Portable">
 
+      <label>Kategori Produk</label>
+      <select id="productCategory">
+        <option value="">⏳ Otomatis dari nama produk</option>
+        <option>Parfum</option>
+        <option>Fashion</option>
+        <option>Beauty & Personal Care</option>
+        <option>Outdoor & Camping</option>
+        <option>Olahraga</option>
+        <option>Elektronik</option>
+        <option>Rumah Tangga</option>
+        <option>Dapur</option>
+        <option>Otomotif</option>
+        <option>Aksesoris</option>
+        <option>Makanan & Minuman</option>
+        <option>Lainnya</option>
+      </select>
+      <div class="hint">Kategori akan dicoba dipilih otomatis dari nama produk. Bisa kamu ubah kalau salah.</div>
+
       <label>Metrics / Data Produk</label>
       <textarea id="metrics" placeholder="Contoh:
 Harga: 79.000
@@ -311,6 +361,23 @@ Komisi: 5%"></textarea>
 
       <label>Gambar Produk yang Mau Dicek</label>
       <input type="file" id="checkImage" accept="image/*">
+
+      <label>Batasi Pencarian Kategori (opsional)</label>
+      <select id="checkCategory">
+        <option value="">Semua kategori</option>
+        <option>Parfum</option>
+        <option>Fashion</option>
+        <option>Beauty & Personal Care</option>
+        <option>Outdoor & Camping</option>
+        <option>Olahraga</option>
+        <option>Elektronik</option>
+        <option>Rumah Tangga</option>
+        <option>Dapur</option>
+        <option>Otomotif</option>
+        <option>Aksesoris</option>
+        <option>Makanan & Minuman</option>
+        <option>Lainnya</option>
+      </select>
       <div id="checkFileName" class="file-name"></div>
       <div id="checkPreview" class="preview-row"></div>
 
@@ -324,6 +391,25 @@ Komisi: 5%"></textarea>
         <button id="refreshBtn" class="secondary">🔄 Refresh</button>
       </div>
 
+      <div class="filter-bar">
+        <input class="search-input" type="search" id="productSearch" placeholder="🔎 Cari nama produk...">
+        <select id="savedCategoryFilter">
+          <option value="">Semua kategori</option>
+          <option>Parfum</option>
+          <option>Fashion</option>
+          <option>Beauty & Personal Care</option>
+          <option>Outdoor & Camping</option>
+          <option>Olahraga</option>
+          <option>Elektronik</option>
+          <option>Rumah Tangga</option>
+          <option>Dapur</option>
+          <option>Otomotif</option>
+          <option>Aksesoris</option>
+          <option>Makanan & Minuman</option>
+          <option>Lainnya</option>
+          <option>Belum dikategorikan</option>
+        </select>
+      </div>
       <div id="products" class="products"></div>
     </div>
 
@@ -354,6 +440,7 @@ Komisi: 5%"></textarea>
 
   const productImage = document.getElementById("productImage");
   const productName = document.getElementById("productName");
+  const productCategory = document.getElementById("productCategory");
   const metrics = document.getElementById("metrics");
   const metricsImages = document.getElementById("metricsImages");
   const notes = document.getElementById("notes");
@@ -373,6 +460,9 @@ Komisi: 5%"></textarea>
   const checkFileName = document.getElementById("checkFileName");
   const checkPreview = document.getElementById("checkPreview");
   const checkBtn = document.getElementById("checkBtn");
+  const checkCategory = document.getElementById("checkCategory");
+  const productSearch = document.getElementById("productSearch");
+  const savedCategoryFilter = document.getElementById("savedCategoryFilter");
   const aiMessage = document.getElementById("aiMessage");
   const aiResults = document.getElementById("aiResults");
 
@@ -449,6 +539,44 @@ Komisi: 5%"></textarea>
     previewFiles(metricsImages, metricsPreview, metricsFileName, false);
   });
 
+
+  const CATEGORY_KEYWORDS = {
+    "Parfum": ["parfum", "perfume", "fragrance", "eau de", "attar", "minyak wangi"],
+    "Fashion": ["baju", "kaos", "kemeja", "jaket", "celana", "rok", "dress", "hoodie", "sweater", "outer", "fashion", "pakaian", "jilbab", "hijab", "tas", "sepatu", "sandal"],
+    "Beauty & Personal Care": ["skincare", "serum", "sunscreen", "lipstik", "makeup", "kosmetik", "shampoo", "sabun", "body lotion", "deodorant", "beauty"],
+    "Outdoor & Camping": ["camping", "tenda", "outdoor", "survival", "carrier", "sleeping bag", "kompor portable", "lampu camping", "senter"],
+    "Olahraga": ["gym", "fitness", "lari", "running", "olahraga", "yoga", "basket", "bola", "raket"],
+    "Elektronik": ["charger", "earphone", "headset", "speaker", "lampu led", "powerbank", "kabel", "kamera", "monitor", "keyboard", "mouse", "elektronik"],
+    "Rumah Tangga": ["rumah", "pel", "sapu", "vacuum", "rak", "organizer", "kamar", "toilet", "kebersihan"],
+    "Dapur": ["dapur", "panci", "wajan", "pisau", "blender", "chopper", "botol", "bekal", "peralatan masak"],
+    "Otomotif": ["motor", "mobil", "helm", "spion", "oli", "otomotif", "dashboard", "sarung jok"],
+    "Aksesoris": ["jam tangan", "jam", "dompet", "kacamata", "aksesoris", "gelang", "kalung", "cincin", "case hp", "cover hp"],
+    "Makanan & Minuman": ["makanan", "minuman", "kopi", "teh", "snack", "cemilan", "sambal", "saus", "coklat"]
+  };
+
+  function inferCategory(name) {
+    const text = String(name || "").toLowerCase();
+    for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+      if (keywords.some(keyword => text.includes(keyword))) return category;
+    }
+    return "Lainnya";
+  }
+
+  function getCategory(product) {
+    const stored = product?.metrics && typeof product.metrics === "object" ? product.metrics.category : "";
+    return stored || (product?.name ? inferCategory(product.name) : "Belum dikategorikan");
+  }
+
+  productName.addEventListener("input", () => {
+    if (!productCategory.value || productCategory.dataset.auto === "true") {
+      productCategory.value = inferCategory(productName.value);
+      productCategory.dataset.auto = "true";
+    }
+  });
+
+  productCategory.addEventListener("change", () => {
+    productCategory.dataset.auto = "false";
+  });
 
   function cosineSimilarity(a, b) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
@@ -693,13 +821,17 @@ Komisi: 5%"></textarea>
 
       if (error) throw error;
 
-      const products = data || [];
+      let products = data || [];
+      const selectedCheckCategory = checkCategory.value;
+      if (selectedCheckCategory) {
+        products = products.filter(product => getCategory(product) === selectedCheckCategory);
+      }
       currentProducts = products;
 
       if (!products.length) {
         aiResults.innerHTML = `
           <div class="ai-status">
-            Database masih kosong. Simpan minimal 1 produk dulu.
+            Tidak ada produk dalam kategori <strong>${escapeHtml(selectedCheckCategory || "ini")}</strong>. Coba pilih <strong>Semua kategori</strong> atau simpan produk terlebih dahulu.
           </div>
         `;
         return;
@@ -870,6 +1002,7 @@ Komisi: 5%"></textarea>
     const name = productName.value.trim();
     const imageFile = productImage.files[0];
     const metricText = metrics.value.trim();
+    const category = productCategory.value || inferCategory(name);
     const metricFiles = Array.from(metricsImages.files || []);
     const noteText = notes.value.trim();
 
@@ -930,6 +1063,7 @@ Komisi: 5%"></textarea>
           metrics: {
             raw: metricText,
             images: metricImageUrls,
+            category: category,
             embedding: productEmbedding
           },
           notes: noteText
@@ -939,6 +1073,8 @@ Komisi: 5%"></textarea>
 
       productImage.value = "";
       productName.value = "";
+      productCategory.value = "";
+      productCategory.dataset.auto = "true";
       metrics.value = "";
       metricsImages.value = "";
       notes.value = "";
@@ -1019,9 +1155,22 @@ Komisi: 5%"></textarea>
       return;
     }
 
+    const searchText = (productSearch?.value || "").trim().toLowerCase();
+    const selectedCategory = savedCategoryFilter?.value || "";
+    const filtered = data.filter(product => {
+      const matchesSearch = !searchText || String(product.name || "").toLowerCase().includes(searchText);
+      const matchesCategory = !selectedCategory || getCategory(product) === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+
     productsContainer.innerHTML = "";
 
-    data.forEach(product => {
+    if (!filtered.length) {
+      productsContainer.innerHTML = `<div class="empty">Tidak ada produk yang cocok dengan pencarian/filter.</div>`;
+      return;
+    }
+
+    filtered.forEach(product => {
       const card = document.createElement("div");
       card.className = "product";
 
@@ -1044,6 +1193,12 @@ Komisi: 5%"></textarea>
         new Date(product.created_at).toLocaleDateString("id-ID");
 
       info.appendChild(name);
+
+      const categoryBadge = document.createElement("div");
+      categoryBadge.className = "category-badge";
+      categoryBadge.textContent = "📁 " + getCategory(product);
+      info.appendChild(categoryBadge);
+
       info.appendChild(date);
 
       const metricText = getMetricText(product);
@@ -1111,6 +1266,8 @@ Komisi: 5%"></textarea>
   }
 
   refreshBtn.addEventListener("click", loadProducts);
+  productSearch.addEventListener("input", () => loadProducts());
+  savedCategoryFilter.addEventListener("change", () => loadProducts());
 </script>
 
 </body>
