@@ -429,15 +429,41 @@ Komisi: 5%"></textarea>
   </div>
 </div>
 
-<script>
-  const SUPABASE_URL = "https://dyaaypnctyekibmlzali.supabase.co";
-  const SUPABASE_PUBLISHABLE_KEY =
-    "sb_publishable_T_hZuh-AjSEeJjh7wziTxg_grGH1XVj";
+<script>  async function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("Gagal memuat library: " + src));
+      document.head.appendChild(script);
+    });
+  }
 
-  const supabaseClient = supabase.createClient(
-    SUPABASE_URL,
-    SUPABASE_PUBLISHABLE_KEY
-  );
+  async function ensureSupabaseLoaded() {
+    if (window.supabase?.createClient) return;
+
+    try {
+      await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
+    } catch (firstError) {
+      await loadScript("https://unpkg.com/@supabase/supabase-js@2");
+    }
+
+    if (!window.supabase?.createClient) {
+      throw new Error("Library Supabase tidak berhasil dimuat. Periksa koneksi internet lalu refresh halaman.");
+    }
+  }
+
+  async function initApp() {
+    await ensureSupabaseLoaded();
+
+    const SUPABASE_URL = "https://dyaaypnctyekibmlzali.supabase.co";
+    const SUPABASE_PUBLISHABLE_KEY =
+      "sb_publishable_T_hZuh-AjSEeJjh7wziTxg_grGH1XVj";
+
+    const supabaseClient = supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_PUBLISHABLE_KEY
+    );
 
   const PRODUCTION_URL =
     "https://maulanaazmitkj-sketch.github.io/produk-affiliate/";
@@ -1376,6 +1402,16 @@ Komisi: 5%"></textarea>
   refreshBtn.addEventListener("click", loadProducts);
   productSearch.addEventListener("input", () => loadProducts());
   savedCategoryFilter.addEventListener("change", () => loadProducts());
+
+  }
+
+  initApp().catch(error => {
+    console.error(error);
+    const message = document.getElementById("authMessage");
+    if (message) {
+      message.innerHTML = `<div class="message error">${String(error.message || error)}</div>`;
+    }
+  });
 </script>
 
 </body>
