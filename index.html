@@ -193,6 +193,24 @@
       border-radius: 12px;
       grid-column: 1 / -1;
     }
+
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+
+    .pagination.hidden { display: none; }
+
+    .page-info {
+      font-size: 13px;
+      color: #6b7280;
+      min-width: 110px;
+      text-align: center;
+    }
     .user-email { font-size: 13px; color: #6b7280; }
 
     .ai-result {
@@ -268,6 +286,7 @@
       .card { padding: 16px; }
       .products { grid-template-columns: 1fr; }
       .category-row, .filter-bar { grid-template-columns: 1fr; }
+      .pagination button { width: 100%; }
     }
   </style>
 </head>
@@ -423,6 +442,12 @@ Komisi: 5%"></textarea>
         </select>
       </div>
       <div id="products" class="products"></div>
+
+      <div id="pagination" class="pagination hidden">
+        <button id="prevPageBtn" class="secondary">← Sebelumnya</button>
+        <span id="pageInfo" class="page-info"></span>
+        <button id="nextPageBtn" class="secondary">Berikutnya →</button>
+      </div>
     </div>
 
   </div>
@@ -478,8 +503,19 @@ Komisi: 5%"></textarea>
   const aiMessage = document.getElementById("aiMessage");
   const aiResults = document.getElementById("aiResults");
 
+  const pagination = document.getElementById("pagination");
+  const prevPageBtn = document.getElementById("prevPageBtn");
+  const nextPageBtn = document.getElementById("nextPageBtn");
+  const pageInfo = document.getElementById("pageInfo");
+
   let mobileNetModel = null;
   let currentProducts = [];
+
+  // Tampilan produk memakai pagination supaya 5.000–10.000 produk
+  // tidak dimuat dan dirender sekaligus di browser.
+  const PRODUCTS_PER_PAGE = 30;
+  let currentPage = 1;
+  let totalProductCount = 0;
 
   function showMessage(element, text, type) {
     element.innerHTML =
@@ -1235,48 +1271,58 @@ Komisi: 5%"></textarea>
     return metricsData.raw || "";
   }
 
-  async function loadProducts() {
-    productsContainer.innerHTML =
-      `<div class="empty">⏳ Memuat produk...</div>`;
+  async function loadProducts(resetPage = false) {
+    if (resetPage) currentPage = 1;
 
-    const { data, error } = await supabaseClient
+    productsContainer.innerHTML =
+      `<div class="empty">⏳ Memuat produk halaman ${currentPage}...</div>`;
+
+    const searchText = (productSearch?.value || "").trim();
+    const selectedCategory = savedCategoryFilter?.value || "";
+
+    let query = supabaseClient
       .from("products")
-      .select("*")
+      .select("*", { count: "exact" })
       .order("created_at", { ascending: false });
+
+    // Pencarian nama dilakukan di server, jadi browser tidak perlu
+    // mengambil ribuan produk hanya untuk memfilter nama.
+    if (searchText) {
+      query = query.ilike("name", `%${searchText}%`);
+    }
+
+    // Kategori tersimpan di JSON metrics.category.
+    if (selectedCategory && selectedCategory !== "Belum dikategorikan") {
+      query = query.eq("metrics->>category", selectedCategory);
+    }
+
+    const from = (currentPage - 1) * PRODUCTS_PER_PAGE;
+    const to = from + PRODUCTS_PER_PAGE - 1;
+
+    const { data, error, count } = await query.range(from, to);
 
     if (error) {
       productsContainer.innerHTML =
         `<div class="empty">Gagal mengambil data: ${escapeHtml(error.message)}</div>`;
+      pagination.classList.add("hidden");
       return;
     }
 
     currentProducts = data || [];
+    totalProductCount = count || 0;
 
     if (!data || data.length === 0) {
       productsContainer.innerHTML =
         `<div class="empty">
-          Belum ada produk.<br><br>
-          Tambahkan produk pertama kamu di atas.
+          Belum ada produk yang cocok dengan pencarian/filter.
         </div>`;
+      pagination.classList.add("hidden");
       return;
     }
-
-    const searchText = (productSearch?.value || "").trim().toLowerCase();
-    const selectedCategory = savedCategoryFilter?.value || "";
-    const filtered = data.filter(product => {
-      const matchesSearch = !searchText || String(product.name || "").toLowerCase().includes(searchText);
-      const matchesCategory = !selectedCategory || getCategory(product) === selectedCategory;
-      return matchesSearch && matchesCategory;
-    });
 
     productsContainer.innerHTML = "";
 
-    if (!filtered.length) {
-      productsContainer.innerHTML = `<div class="empty">Tidak ada produk yang cocok dengan pencarian/filter.</div>`;
-      return;
-    }
-
-    filtered.forEach(product => {
+    data.forEach(product => {
       const card = document.createElement("div");
       card.className = "product";
 
@@ -1284,6 +1330,7 @@ Komisi: 5%"></textarea>
       image.className = "product-main-image";
       image.src = product.image_url || "";
       image.alt = product.name || "Produk";
+      image.loading = "lazy";
 
       const info = document.createElement("div");
       info.className = "product-info";
@@ -1321,10 +1368,10 @@ Komisi: 5%"></textarea>
         box.appendChild(title);
 
         if (metricText) {
-          const text = document.createElement("div");
-          text.className = "metrics-text";
-          text.textContent = metricText;
-          box.appendChild(text);
+          const metricTextEl = document.createElement("div");
+          metricTextEl.className = "metrics-text";
+          metricTextEl.textContent = metricText;
+          box.appendChild(metricTextEl);
         }
 
         if (metricUrls.length) {
@@ -1336,6 +1383,7 @@ Komisi: 5%"></textarea>
             metricImg.src = url;
             metricImg.alt = "Screenshot metrics";
             metricImg.title = "Klik untuk membuka gambar";
+            metricImg.loading = "lazy";
             metricImg.addEventListener("click", () => {
               window.open(url, "_blank");
             });
@@ -1369,11 +1417,43 @@ Komisi: 5%"></textarea>
       card.appendChild(info);
       productsContainer.appendChild(card);
     });
+
+    const totalPages = Math.max(1, Math.ceil(totalProductCount / PRODUCTS_PER_PAGE));
+
+    if (totalPages > 1) {
+      pagination.classList.remove("hidden");
+      pageInfo.textContent = `Halaman ${currentPage} / ${totalPages} • ${totalProductCount.toLocaleString("id-ID")} produk`;
+      prevPageBtn.disabled = currentPage <= 1;
+      nextPageBtn.disabled = currentPage >= totalPages;
+    } else {
+      pagination.classList.add("hidden");
+    }
   }
 
-  refreshBtn.addEventListener("click", loadProducts);
-  productSearch.addEventListener("input", () => loadProducts());
-  savedCategoryFilter.addEventListener("change", () => loadProducts());
+  refreshBtn.addEventListener("click", () => loadProducts(true));
+
+  let searchTimer = null;
+  productSearch.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadProducts(true), 250);
+  });
+
+  savedCategoryFilter.addEventListener("change", () => loadProducts(true));
+
+  prevPageBtn.addEventListener("click", () => {
+    if (currentPage <= 1) return;
+    currentPage -= 1;
+    loadProducts();
+    window.scrollTo({ top: productsContainer.offsetTop - 20, behavior: "smooth" });
+  });
+
+  nextPageBtn.addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil(totalProductCount / PRODUCTS_PER_PAGE));
+    if (currentPage >= totalPages) return;
+    currentPage += 1;
+    loadProducts();
+    window.scrollTo({ top: productsContainer.offsetTop - 20, behavior: "smooth" });
+  });
 </script>
 
 </body>
