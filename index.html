@@ -313,8 +313,7 @@
 
       <div id="productMessage"></div>
       <div class="storage-note">
-        🗜️ Foto otomatis di-resize + WebP + kompresi bertahap sebelum upload.
-        Foto utama ditargetkan ≤450 KB dan screenshot metrics ≤550 KB agar storage tetap hemat untuk ribuan produk.
+        🗜️ Foto otomatis di-resize + WebP + dikompres sebelum disimpan agar storage hemat untuk ribuan produk.
       </div>
 
       <label>Foto / Screenshot Produk</label>
@@ -429,41 +428,15 @@ Komisi: 5%"></textarea>
   </div>
 </div>
 
-<script>  async function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = src;
-      script.onload = resolve;
-      script.onerror = () => reject(new Error("Gagal memuat library: " + src));
-      document.head.appendChild(script);
-    });
-  }
+<script>
+  const SUPABASE_URL = "https://dyaaypnctyekibmlzali.supabase.co";
+  const SUPABASE_PUBLISHABLE_KEY =
+    "sb_publishable_T_hZuh-AjSEeJjh7wziTxg_grGH1XVj";
 
-  async function ensureSupabaseLoaded() {
-    if (window.supabase?.createClient) return;
-
-    try {
-      await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
-    } catch (firstError) {
-      await loadScript("https://unpkg.com/@supabase/supabase-js@2");
-    }
-
-    if (!window.supabase?.createClient) {
-      throw new Error("Library Supabase tidak berhasil dimuat. Periksa koneksi internet lalu refresh halaman.");
-    }
-  }
-
-  async function initApp() {
-    await ensureSupabaseLoaded();
-
-    const SUPABASE_URL = "https://dyaaypnctyekibmlzali.supabase.co";
-    const SUPABASE_PUBLISHABLE_KEY =
-      "sb_publishable_T_hZuh-AjSEeJjh7wziTxg_grGH1XVj";
-
-    const supabaseClient = supabase.createClient(
-      SUPABASE_URL,
-      SUPABASE_PUBLISHABLE_KEY
-    );
+  const supabaseClient = supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY
+  );
 
   const PRODUCTION_URL =
     "https://maulanaazmitkj-sketch.github.io/produk-affiliate/";
@@ -1046,7 +1019,6 @@ Komisi: 5%"></textarea>
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, 0, 0, width, height);
 
-      // Kompresi bertahap sampai ukuran file masuk target.
       let quality = initialQuality;
       let blob = null;
 
@@ -1183,7 +1155,7 @@ Komisi: 5%"></textarea>
 
       showMessage(
         productMessage,
-        `🗜️ Foto berhasil dikompres. Ukuran berkurang sekitar ${compressionPercent}%. Membuat indeks visual produk...`,
+        `🗜️ Foto dikompres. Storage berkurang sekitar ${compressionPercent}%. Membuat indeks visual produk...`,
         "success"
       );
 
@@ -1402,16 +1374,6 @@ Komisi: 5%"></textarea>
   refreshBtn.addEventListener("click", loadProducts);
   productSearch.addEventListener("input", () => loadProducts());
   savedCategoryFilter.addEventListener("change", () => loadProducts());
-
-  }
-
-  initApp().catch(error => {
-    console.error(error);
-    const message = document.getElementById("authMessage");
-    if (message) {
-      message.innerHTML = `<div class="message error">${String(error.message || error)}</div>`;
-    }
-  });
 </script>
 
 </body>
