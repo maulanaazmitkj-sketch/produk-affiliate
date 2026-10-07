@@ -479,6 +479,7 @@ Komisi: 5%"></textarea>
   // Tampilan produk memakai pagination supaya 5.000–10.000 produk
   // tidak dimuat dan dirender sekaligus di browser.
   const PRODUCTS_PER_PAGE = 30;
+  // V10.1: 72–81% hanya diberi peringatan; >=82% diblokir.
   let currentPage = 1;
   let totalProductCount = 0;
 
@@ -950,7 +951,7 @@ Komisi: 5%"></textarea>
 
 
   async function findSimilarExistingProduct(imageFile) {
-    // V10: pencarian kemiripan dilakukan di PostgreSQL + pgvector.
+    // V10.1: pencarian kemiripan dilakukan di PostgreSQL + pgvector.
     // Browser hanya mengirim 1 embedding dan menerima kandidat terdekat,
     // bukan mengunduh seluruh embedding 5.000–10.000 produk.
     const queryEmbedding = await getEmbeddingFromImageSource(imageFile);
@@ -985,13 +986,37 @@ Komisi: 5%"></textarea>
 
     productMessage.innerHTML = `
       <div class="message error">
-        <strong>${isDuplicate ? "🔴 Produk kemungkinan sudah pernah disimpan!" : "🟡 Produk sangat mirip dengan yang sudah ada!"}</strong>
+        <strong>${isDuplicate ? "🔴 Produk kemungkinan sudah pernah disimpan!" : "🟠 Produk terlalu mirip dengan yang sudah ada!"}</strong>
         <br>
         Kemiripan visual: <strong>${percent}%</strong>
         <br>
         Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
         Produk baru <strong>tidak disimpan</strong> agar database tidak berisi produk yang sama/mirip.
+        ${match.product.image_url ? `
+          <br>
+          <img
+            src="${escapeHtml(match.product.image_url)}"
+            alt="Produk yang mirip"
+            style="width:110px;height:110px;object-fit:cover;border-radius:10px;margin-top:9px;border:1px solid #e5e7eb;"
+          >
+        ` : ""}
+      </div>
+    `;
+  }
+
+  function renderSimilarNotice(match) {
+    const percent = Math.round(match.score * 100);
+
+    productMessage.innerHTML = `
+      <div class="message success">
+        <strong>🟡 AI menemukan produk yang mirip, tetapi produk tetap disimpan.</strong>
+        <br>
+        Kemiripan visual: <strong>${percent}%</strong>
+        <br>
+        Produk yang paling mirip: <strong>${escapeHtml(match.product.name || "-")}</strong>
+        <br><br>
+        <small>Rentang 72–81% dianggap mirip, bukan duplikat pasti. Kamu tetap bisa menyimpan produk berbeda.</small>
         ${match.product.image_url ? `
           <br>
           <img
@@ -1042,13 +1067,16 @@ Komisi: 5%"></textarea>
       );
 
       const bestMatch = await findSimilarExistingProduct(imageFile);
+      const similarMatch = bestMatch && bestMatch.score >= 0.72 ? bestMatch : null;
 
+      // >=82% tetap diblokir agar database tidak dipenuhi duplikat/mirip sekali.
       if (bestMatch && bestMatch.score >= 0.82) {
         renderDuplicateWarning(bestMatch);
         return;
       }
 
-      // Jika tidak ada kemiripan >= 82%, produk dianggap baru dan langsung disimpan.
+      // 72–81% terdeteksi sebagai produk mirip, tetapi tetap boleh disimpan.
+      // <72% dianggap tidak cukup mirip.
       // Upload foto utama produk
       const productUpload = await uploadImage(
         imageFile,
@@ -1136,11 +1164,15 @@ Komisi: 5%"></textarea>
       productPreview.innerHTML = "";
       metricsPreview.innerHTML = "";
 
-      showMessage(
-        productMessage,
-        "✅ Produk + data metrics berhasil disimpan!",
-        "success"
-      );
+      if (similarMatch) {
+        renderSimilarNotice(similarMatch);
+      } else {
+        showMessage(
+          productMessage,
+          "✅ Produk + data metrics berhasil disimpan!",
+          "success"
+        );
+      }
 
       await loadProducts(true);
 
