@@ -332,7 +332,7 @@
 
       <div id="productMessage"></div>
       <div class="storage-note">
-        🗜️ Foto otomatis di-resize + WebP + dikompres sebelum disimpan agar storage hemat untuk ribuan produk.
+        🤖 Foto akan otomatis dicek AI terhadap produk yang sudah ada. Jika sama/mirip, tidak disimpan. Jika belum ada, langsung disimpan. 🗜️ Foto juga otomatis di-resize + WebP + dikompres.
       </div>
 
       <label>Foto / Screenshot Produk</label>
@@ -379,41 +379,6 @@ Komisi: 5%"></textarea>
       <textarea id="notes" placeholder="Contoh: Pernah test 2 video, view rendah."></textarea>
 
       <button id="saveBtn" class="primary">💾 Simpan Produk</button>
-    </div>
-
-    <div class="card">
-      <h2>🔍 Cek Produk Sebelum Test</h2>
-      <div class="subtitle" style="margin-bottom:14px;">
-        Upload gambar produk baru. Sistem membandingkan <strong>gambar</strong> dengan produk di database.
-        Nama produk, metrics, dan catatan tidak dipakai untuk penilaian kemiripan.
-      </div>
-
-      <div id="aiMessage"></div>
-
-      <label>Gambar Produk yang Mau Dicek</label>
-      <input type="file" id="checkImage" accept="image/*">
-
-      <label>Batasi Pencarian Kategori (opsional)</label>
-      <select id="checkCategory">
-        <option value="">Semua kategori</option>
-        <option>Parfum</option>
-        <option>Fashion</option>
-        <option>Beauty & Personal Care</option>
-        <option>Outdoor & Camping</option>
-        <option>Olahraga</option>
-        <option>Elektronik</option>
-        <option>Rumah Tangga</option>
-        <option>Dapur</option>
-        <option>Otomotif</option>
-        <option>Aksesoris</option>
-        <option>Makanan & Minuman</option>
-        <option>Lainnya</option>
-      </select>
-      <div id="checkFileName" class="file-name"></div>
-      <div id="checkPreview" class="preview-row"></div>
-
-      <button id="checkBtn" class="primary">🔍 Cek Produk</button>
-      <div id="aiResults" style="margin-top:16px;"></div>
     </div>
 
     <div class="card">
@@ -493,15 +458,7 @@ Komisi: 5%"></textarea>
   const metricsFileName = document.getElementById("metricsFileName");
   const metricsPreview = document.getElementById("metricsPreview");
 
-  const checkImage = document.getElementById("checkImage");
-  const checkFileName = document.getElementById("checkFileName");
-  const checkPreview = document.getElementById("checkPreview");
-  const checkBtn = document.getElementById("checkBtn");
-  const checkCategory = document.getElementById("checkCategory");
-  const productSearch = document.getElementById("productSearch");
-  const savedCategoryFilter = document.getElementById("savedCategoryFilter");
-  const aiMessage = document.getElementById("aiMessage");
-  const aiResults = document.getElementById("aiResults");
+
 
   const pagination = document.getElementById("pagination");
   const prevPageBtn = document.getElementById("prevPageBtn");
@@ -746,12 +703,11 @@ Komisi: 5%"></textarea>
 
     if (existing && existing.length) return existing;
 
-    aiResults.innerHTML = `
-      <div class="ai-status">
-        🤖 Membuat indeks visual produk lama ${index + 1}/${total}:
-        <strong>${escapeHtml(product.name || "-")}</strong>
-      </div>
-    `;
+    showMessage(
+      productMessage,
+      `🤖 Mengecek database... membuat indeks visual ${index + 1}/${total}: ${product.name || "-"}`,
+      "success"
+    );
 
     const embedding = await getEmbeddingFromImageSource(product.image_url);
     await saveEmbedding(product, embedding);
@@ -814,134 +770,6 @@ Komisi: 5%"></textarea>
       </div>
     `;
   }
-
-  checkImage.addEventListener("change", () => {
-    checkPreview.innerHTML = "";
-    checkFileName.textContent = "";
-    aiMessage.innerHTML = "";
-    aiResults.innerHTML = "";
-
-    const file = checkImage.files[0];
-    if (!file) return;
-
-    checkFileName.textContent =
-      "File: " + file.name + "  (klik × pada gambar untuk membatalkan)";
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "preview-item";
-
-    const img = document.createElement("img");
-    img.alt = file.name;
-    img.src = URL.createObjectURL(file);
-
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "remove-preview";
-    removeBtn.textContent = "×";
-    removeBtn.title = "Batalkan gambar ini";
-
-    removeBtn.addEventListener("click", () => {
-      const dt = new DataTransfer();
-      checkImage.files = dt.files;
-      checkPreview.innerHTML = "";
-      checkFileName.textContent = "";
-      aiMessage.innerHTML = "";
-      aiResults.innerHTML = "";
-    });
-
-    wrapper.appendChild(img);
-    wrapper.appendChild(removeBtn);
-    checkPreview.appendChild(wrapper);
-  });
-
-  checkBtn.addEventListener("click", async () => {
-    const file = checkImage.files[0];
-
-    if (!file) {
-      showMessage(aiMessage, "Pilih gambar produk yang mau dicek dulu.", "error");
-      return;
-    }
-
-    checkBtn.disabled = true;
-    checkBtn.textContent = "⏳ Menganalisis...";
-    aiResults.innerHTML = "";
-
-    try {
-      const { data, error } = await supabaseClient
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      let products = data || [];
-      const selectedCheckCategory = checkCategory.value;
-      if (selectedCheckCategory) {
-        products = products.filter(product => getCategory(product) === selectedCheckCategory);
-      }
-      currentProducts = products;
-
-      if (!products.length) {
-        aiResults.innerHTML = `
-          <div class="ai-status">
-            Tidak ada produk dalam kategori <strong>${escapeHtml(selectedCheckCategory || "ini")}</strong>. Coba pilih <strong>Semua kategori</strong> atau simpan produk terlebih dahulu.
-          </div>
-        `;
-        return;
-      }
-
-      const queryEmbedding = await getEmbeddingFromImageSource(file);
-      const matches = [];
-
-      for (let i = 0; i < products.length; i++) {
-        const product = products[i];
-
-        try {
-          const embedding = await ensureProductEmbedding(
-            product,
-            i,
-            products.length
-          );
-
-          matches.push({
-            product,
-            score: cosineSimilarity(queryEmbedding, embedding)
-          });
-        } catch (productError) {
-          console.warn(
-            "Gagal mengindeks produk:",
-            product.name,
-            productError
-          );
-        }
-      }
-
-      matches.sort((a, b) => b.score - a.score);
-
-      // Kandidat dengan skor di bawah ini tidak ditampilkan.
-      // Ambang ini adalah titik awal dan bisa kita kalibrasi dari hasil tes kamu.
-      const candidates = matches.filter(item => item.score >= 0.60);
-
-      renderAiResults(candidates, products.length);
-
-      showMessage(
-        aiMessage,
-        `✅ Selesai. ${products.length} produk dibandingkan berdasarkan gambar.`,
-        "success"
-      );
-
-    } catch (error) {
-      console.error(error);
-      showMessage(
-        aiMessage,
-        "Gagal melakukan cek produk: " + error.message,
-        "error"
-      );
-    } finally {
-      checkBtn.disabled = false;
-      checkBtn.textContent = "🔍 Cek Produk";
-    }
-  });
 
   signupBtn.addEventListener("click", async () => {
     const email = emailInput.value.trim();
@@ -1112,6 +940,73 @@ Komisi: 5%"></textarea>
     };
   }
 
+
+  async function findSimilarExistingProduct(imageFile) {
+    const { data, error } = await supabaseClient
+      .from("products")
+      .select("id,name,image_url,metrics")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    const products = data || [];
+    if (!products.length) return null;
+
+    const queryEmbedding = await getEmbeddingFromImageSource(imageFile);
+    let bestMatch = null;
+
+    for (let i = 0; i < products.length; i++) {
+      const product = products[i];
+
+      try {
+        const embedding = await ensureProductEmbedding(
+          product,
+          i,
+          products.length
+        );
+
+        const score = cosineSimilarity(queryEmbedding, embedding);
+
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = { product, score };
+        }
+      } catch (productError) {
+        console.warn(
+          "Gagal membandingkan produk:",
+          product.name,
+          productError
+        );
+      }
+    }
+
+    return bestMatch;
+  }
+
+  function renderDuplicateWarning(match) {
+    const percent = Math.round(match.score * 100);
+    const isDuplicate = match.score >= 0.90;
+
+    productMessage.innerHTML = `
+      <div class="message error">
+        <strong>${isDuplicate ? "🔴 Produk kemungkinan sudah pernah disimpan!" : "🟡 Produk sangat mirip dengan yang sudah ada!"}</strong>
+        <br>
+        Kemiripan visual: <strong>${percent}%</strong>
+        <br>
+        Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
+        <br><br>
+        Produk baru <strong>tidak disimpan</strong> agar database tidak berisi produk yang sama/mirip.
+        ${match.product.image_url ? `
+          <br>
+          <img
+            src="${escapeHtml(match.product.image_url)}"
+            alt="Produk yang mirip"
+            style="width:110px;height:110px;object-fit:cover;border-radius:10px;margin-top:9px;border:1px solid #e5e7eb;"
+          >
+        ` : ""}
+      </div>
+    `;
+  }
+
   saveBtn.addEventListener("click", async () => {
     const name = productName.value.trim();
     const imageFile = productImage.files[0];
@@ -1140,6 +1035,23 @@ Komisi: 5%"></textarea>
 
       if (!user) throw new Error("Session login tidak ditemukan.");
 
+      // LANGKAH OTOMATIS:
+      // Cek foto baru terhadap produk yang sudah tersimpan SEBELUM upload.
+      // Jika sangat mirip, hentikan proses agar tidak membuat duplikat.
+      showMessage(
+        productMessage,
+        "🤖 Mengecek apakah produk ini sudah pernah kamu masukkan...",
+        "success"
+      );
+
+      const bestMatch = await findSimilarExistingProduct(imageFile);
+
+      if (bestMatch && bestMatch.score >= 0.82) {
+        renderDuplicateWarning(bestMatch);
+        return;
+      }
+
+      // Jika tidak ada kemiripan >= 82%, produk dianggap baru dan langsung disimpan.
       // Upload foto utama produk
       const productUpload = await uploadImage(
         imageFile,
@@ -1232,7 +1144,7 @@ Komisi: 5%"></textarea>
         "success"
       );
 
-      await loadProducts();
+      await loadProducts(true);
 
     } catch (error) {
       console.error(error);
