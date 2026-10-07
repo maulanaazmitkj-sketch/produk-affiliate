@@ -1291,9 +1291,24 @@ Komisi: 5%"></textarea>
       query = query.ilike("name", `%${searchText}%`);
     }
 
-    // Kategori tersimpan di JSON metrics.category.
+    // Kategori bisa berasal dari:
+    // 1) kategori yang disimpan manual di metrics.category, atau
+    // 2) kategori otomatis dari nama produk (produk lama juga memakai cara ini).
+    // Karena itu filter tidak boleh hanya mencari metrics.category.
     if (selectedCategory && selectedCategory !== "Belum dikategorikan") {
-      query = query.eq("metrics->>category", selectedCategory);
+      const keywords = CATEGORY_KEYWORDS[selectedCategory] || [];
+
+      const filters = [
+        `metrics->>category.eq.${selectedCategory}`
+      ];
+
+      // Produk lama yang belum menyimpan category tetap bisa ditemukan
+      // berdasarkan kata kunci nama produknya.
+      for (const keyword of keywords) {
+        filters.push(`name.ilike.*${keyword}*`);
+      }
+
+      query = query.or(filters.join(","));
     }
 
     const from = (currentPage - 1) * PRODUCTS_PER_PAGE;
