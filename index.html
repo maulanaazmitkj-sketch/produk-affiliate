@@ -1076,33 +1076,6 @@ Komisi: 5%"></textarea>
       originalBytes: file?.size || 0,
       compressedBytes: compressedFile?.size || 0
     };
-  }(file, userId, prefix, compressionOptions = {}) {
-    const compressedFile = await compressImage(file, compressionOptions);
-    const safeExtension = "webp";
-
-    const filePath =
-      userId + "/" +
-      prefix + "-" +
-      Date.now() + "-" +
-      Math.random().toString(36).substring(2) +
-      "." + safeExtension;
-
-    const { error: uploadError } = await supabaseClient
-      .storage
-      .from("product-images")
-      .upload(filePath, compressedFile, {
-        contentType: compressedFile.type,
-        upsert: false
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data } = supabaseClient
-      .storage
-      .from("product-images")
-      .getPublicUrl(filePath);
-
-    return data.publicUrl;
   }
 
   saveBtn.addEventListener("click", async () => {
