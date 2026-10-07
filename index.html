@@ -6,6 +6,8 @@
   <title>Database Produk Affiliate</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1"></script>
 
   <style>
     * { box-sizing: border-box; }
@@ -184,6 +186,43 @@
     }
     .user-email { font-size: 13px; color: #6b7280; }
 
+    .ai-result {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 10px;
+      background: #fff;
+    }
+    .ai-result-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .score {
+      font-weight: bold;
+      font-size: 13px;
+      background: #f3f4f6;
+      padding: 5px 8px;
+      border-radius: 999px;
+    }
+    .ai-status {
+      font-size: 13px;
+      color: #374151;
+      padding: 10px;
+      border-radius: 10px;
+      background: #f9fafb;
+      line-height: 1.5;
+    }
+    .ai-note {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 10px;
+      line-height: 1.5;
+    }
+
     @media (max-width: 600px) {
       .container { padding: 12px; }
       .card { padding: 16px; }
@@ -262,6 +301,24 @@ Komisi: 5%"></textarea>
     </div>
 
     <div class="card">
+      <h2>🔍 Cek Produk Sebelum Test</h2>
+      <div class="subtitle" style="margin-bottom:14px;">
+        Upload gambar produk baru. Sistem membandingkan <strong>gambar</strong> dengan produk di database.
+        Nama produk, metrics, dan catatan tidak dipakai untuk penilaian kemiripan.
+      </div>
+
+      <div id="aiMessage"></div>
+
+      <label>Gambar Produk yang Mau Dicek</label>
+      <input type="file" id="checkImage" accept="image/*">
+      <div id="checkFileName" class="file-name"></div>
+      <div id="checkPreview" class="preview-row"></div>
+
+      <button id="checkBtn" class="primary">🔍 Cek Produk</button>
+      <div id="aiResults" style="margin-top:16px;"></div>
+    </div>
+
+    <div class="card">
       <div class="topbar">
         <h2>📦 Produk yang Sudah Disimpan</h2>
         <button id="refreshBtn" class="secondary">🔄 Refresh</button>
@@ -311,6 +368,16 @@ Komisi: 5%"></textarea>
   const productPreview = document.getElementById("productPreview");
   const metricsFileName = document.getElementById("metricsFileName");
   const metricsPreview = document.getElementById("metricsPreview");
+
+  const checkImage = document.getElementById("checkImage");
+  const checkFileName = document.getElementById("checkFileName");
+  const checkPreview = document.getElementById("checkPreview");
+  const checkBtn = document.getElementById("checkBtn");
+  const aiMessage = document.getElementById("aiMessage");
+  const aiResults = document.getElementById("aiResults");
+
+  let mobileNetModel = null;
+  let currentProducts = [];
 
   function showMessage(element, text, type) {
     element.innerHTML =
@@ -380,6 +447,315 @@ Komisi: 5%"></textarea>
 
   metricsImages.addEventListener("change", () => {
     previewFiles(metricsImages, metricsPreview, metricsFileName, false);
+  });
+
+
+  function cosineSimilarity(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
+
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      const x = Number(a[i]) || 0;
+      const y = Number(b[i]) || 0;
+      dot += x * y;
+      normA += x * x;
+      normB += y * y;
+    }
+
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom ? Math.max(-1, Math.min(1, dot / denom)) : 0;
+  }
+
+  function normalizeEmbedding(values) {
+    let sum = 0;
+    for (const value of values) {
+      const n = Number(value) || 0;
+      sum += n * n;
+    }
+    const norm = Math.sqrt(sum) || 1;
+    return values.map(value => (Number(value) || 0) / norm);
+  }
+
+  async function loadVisualModel() {
+    if (mobileNetModel) return mobileNetModel;
+
+    showMessage(
+      aiMessage,
+      "🤖 Menyiapkan AI visual untuk pertama kali. Tunggu sebentar...",
+      "success"
+    );
+
+    mobileNetModel = await mobilenet.load({
+      version: 2,
+      alpha: 1.0
+    });
+
+    return mobileNetModel;
+  }
+
+  function createImageElement(source) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+
+      let objectUrl = null;
+      if (typeof source === "string") {
+        img.src = source;
+      } else {
+        objectUrl = URL.createObjectURL(source);
+        img.src = objectUrl;
+      }
+
+      img.onload = () => {
+        img.__objectUrl = objectUrl;
+        resolve(img);
+      };
+
+      img.onerror = () => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        reject(new Error("Gambar tidak bisa dibaca oleh AI."));
+      };
+    });
+  }
+
+  async function getEmbeddingFromImageSource(source) {
+    const model = await loadVisualModel();
+    const img = await createImageElement(source);
+
+    try {
+      const tensor = model.infer(img, true);
+      const values = Array.from(await tensor.data());
+      tensor.dispose();
+      return normalizeEmbedding(values);
+    } finally {
+      if (img.__objectUrl) URL.revokeObjectURL(img.__objectUrl);
+    }
+  }
+
+  async function saveEmbedding(product, embedding) {
+    const existingMetrics =
+      product.metrics && typeof product.metrics === "object"
+        ? product.metrics
+        : {};
+
+    const newMetrics = {
+      ...existingMetrics,
+      embedding
+    };
+
+    const { error } = await supabaseClient
+      .from("products")
+      .update({ metrics: newMetrics })
+      .eq("id", product.id);
+
+    if (error) throw error;
+    product.metrics = newMetrics;
+  }
+
+  async function ensureProductEmbedding(product, index, total) {
+    const existing =
+      product.metrics &&
+      typeof product.metrics === "object" &&
+      Array.isArray(product.metrics.embedding)
+        ? product.metrics.embedding
+        : null;
+
+    if (existing && existing.length) return existing;
+
+    aiResults.innerHTML = `
+      <div class="ai-status">
+        🤖 Membuat indeks visual produk lama ${index + 1}/${total}:
+        <strong>${escapeHtml(product.name || "-")}</strong>
+      </div>
+    `;
+
+    const embedding = await getEmbeddingFromImageSource(product.image_url);
+    await saveEmbedding(product, embedding);
+    return embedding;
+  }
+
+  function similarityLabel(score) {
+    if (score >= 0.90) return "🔴 SANGAT MIRIP / KEMUNGKINAN SAMA";
+    if (score >= 0.82) return "🟡 MIRIP — CEK MANUAL";
+    if (score >= 0.72) return "🟠 ADA KEMIRIPAN — CEK MANUAL";
+    return "⚪ KEMIRIPAN LEMAH";
+  }
+
+  function renderAiResults(matches, totalProducts) {
+    if (!matches.length) {
+      aiResults.innerHTML = `
+        <div class="ai-status">
+          🔴 <strong>Belum ada produk mirip yang terdeteksi.</strong>
+        </div>
+      `;
+      return;
+    }
+
+    const topMatches = matches.slice(0, 5);
+
+    aiResults.innerHTML = `
+      <div style="font-weight:bold;margin-bottom:8px;">
+        Hasil visual dari ${totalProducts} produk:
+      </div>
+
+      ${topMatches.map((item, index) => {
+        const percent = Math.round(item.score * 100);
+
+        return `
+          <div class="ai-result">
+            <div class="ai-result-head">
+              <strong>${index + 1}. ${escapeHtml(item.product.name || "-")}</strong>
+              <span class="score">${percent}%</span>
+            </div>
+
+            <div style="font-size:13px;">
+              ${similarityLabel(item.score)}
+            </div>
+
+            ${item.product.image_url ? `
+              <img
+                src="${escapeHtml(item.product.image_url)}"
+                alt="Foto ${escapeHtml(item.product.name || "produk")}"
+                style="width:110px;height:110px;object-fit:cover;border-radius:10px;margin-top:9px;border:1px solid #e5e7eb;"
+              >
+            ` : ""}
+          </div>
+        `;
+      }).join("")}
+
+      <div class="ai-note">
+        ⚠️ Skor ini adalah <strong>kemiripan visual</strong>, bukan bukti bahwa dua produk 100% sama.
+        Semua hasil yang mirip tetap <strong>CEK MANUAL</strong>.
+        Nama, metrics, dan catatan tidak digunakan untuk perbandingan.
+      </div>
+    `;
+  }
+
+  checkImage.addEventListener("change", () => {
+    checkPreview.innerHTML = "";
+    checkFileName.textContent = "";
+    aiMessage.innerHTML = "";
+    aiResults.innerHTML = "";
+
+    const file = checkImage.files[0];
+    if (!file) return;
+
+    checkFileName.textContent =
+      "File: " + file.name + "  (klik × pada gambar untuk membatalkan)";
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "preview-item";
+
+    const img = document.createElement("img");
+    img.alt = file.name;
+    img.src = URL.createObjectURL(file);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "remove-preview";
+    removeBtn.textContent = "×";
+    removeBtn.title = "Batalkan gambar ini";
+
+    removeBtn.addEventListener("click", () => {
+      const dt = new DataTransfer();
+      checkImage.files = dt.files;
+      checkPreview.innerHTML = "";
+      checkFileName.textContent = "";
+      aiMessage.innerHTML = "";
+      aiResults.innerHTML = "";
+    });
+
+    wrapper.appendChild(img);
+    wrapper.appendChild(removeBtn);
+    checkPreview.appendChild(wrapper);
+  });
+
+  checkBtn.addEventListener("click", async () => {
+    const file = checkImage.files[0];
+
+    if (!file) {
+      showMessage(aiMessage, "Pilih gambar produk yang mau dicek dulu.", "error");
+      return;
+    }
+
+    checkBtn.disabled = true;
+    checkBtn.textContent = "⏳ Menganalisis...";
+    aiResults.innerHTML = "";
+
+    try {
+      const { data, error } = await supabaseClient
+        .from("products")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      const products = data || [];
+      currentProducts = products;
+
+      if (!products.length) {
+        aiResults.innerHTML = `
+          <div class="ai-status">
+            Database masih kosong. Simpan minimal 1 produk dulu.
+          </div>
+        `;
+        return;
+      }
+
+      const queryEmbedding = await getEmbeddingFromImageSource(file);
+      const matches = [];
+
+      for (let i = 0; i < products.length; i++) {
+        const product = products[i];
+
+        try {
+          const embedding = await ensureProductEmbedding(
+            product,
+            i,
+            products.length
+          );
+
+          matches.push({
+            product,
+            score: cosineSimilarity(queryEmbedding, embedding)
+          });
+        } catch (productError) {
+          console.warn(
+            "Gagal mengindeks produk:",
+            product.name,
+            productError
+          );
+        }
+      }
+
+      matches.sort((a, b) => b.score - a.score);
+
+      // Kandidat dengan skor di bawah ini tidak ditampilkan.
+      // Ambang ini adalah titik awal dan bisa kita kalibrasi dari hasil tes kamu.
+      const candidates = matches.filter(item => item.score >= 0.60);
+
+      renderAiResults(candidates, products.length);
+
+      showMessage(
+        aiMessage,
+        `✅ Selesai. ${products.length} produk dibandingkan berdasarkan gambar.`,
+        "success"
+      );
+
+    } catch (error) {
+      console.error(error);
+      showMessage(
+        aiMessage,
+        "Gagal melakukan cek produk: " + error.message,
+        "error"
+      );
+    } finally {
+      checkBtn.disabled = false;
+      checkBtn.textContent = "🔍 Cek Produk";
+    }
   });
 
   signupBtn.addEventListener("click", async () => {
@@ -538,6 +914,14 @@ Komisi: 5%"></textarea>
         metricImageUrls.push(url);
       }
 
+      showMessage(
+        productMessage,
+        "🤖 Membuat indeks visual produk...",
+        "success"
+      );
+
+      const productEmbedding = await getEmbeddingFromImageSource(imageFile);
+
       const { error: insertError } = await supabaseClient
         .from("products")
         .insert({
@@ -545,7 +929,8 @@ Komisi: 5%"></textarea>
           image_url: imageUrl,
           metrics: {
             raw: metricText,
-            images: metricImageUrls
+            images: metricImageUrls,
+            embedding: productEmbedding
           },
           notes: noteText
         });
@@ -622,6 +1007,8 @@ Komisi: 5%"></textarea>
         `<div class="empty">Gagal mengambil data: ${escapeHtml(error.message)}</div>`;
       return;
     }
+
+    currentProducts = data || [];
 
     if (!data || data.length === 0) {
       productsContainer.innerHTML =
