@@ -724,9 +724,10 @@ Komisi: 5%"></textarea>
   }
 
   function similarityLabel(score) {
-    if (score >= 0.90) return "🔴 SANGAT MIRIP / KEMUNGKINAN SAMA";
-    if (score >= 0.82) return "🟡 MIRIP — CEK MANUAL";
-    if (score >= 0.72) return "🟠 ADA KEMIRIPAN — CEK MANUAL";
+    if (score >= 0.85) return "🔴 SANGAT MIRIP / KEMUNGKINAN SAMA";
+    if (score >= 0.68) return "🔴 TERLALU MIRIP — DIBLOKIR";
+    if (score >= 0.55) return "🟡 MIRIP — CEK MANUAL";
+    if (score >= 0.45) return "🟠 ADA KEMIRIPAN — CEK MANUAL";
     return "⚪ KEMIRIPAN LEMAH";
   }
 
@@ -775,7 +776,7 @@ Komisi: 5%"></textarea>
       <div class="ai-note">
         ⚠️ Skor ini adalah <strong>kemiripan visual</strong>, bukan bukti bahwa dua produk 100% sama.
         Semua hasil yang mirip tetap <strong>CEK MANUAL</strong>.
-        Nama, metrics, dan catatan tidak digunakan untuk perbandingan.
+        Nama, metrics, dan catatan tidak digunakan untuk perbandingan. V10.3 menambahkan pHash grayscale untuk menangkap gambar yang sama atau sangat mirip walaupun warna berubah.
       </div>
     `;
   }
@@ -950,39 +951,320 @@ Komisi: 5%"></textarea>
   }
 
 
-  async function findSimilarExistingProduct(imageFile) {
-    // V10.1: pencarian kemiripan dilakukan di PostgreSQL + pgvector.
-    // Browser hanya mengirim 1 embedding dan menerima kandidat terdekat,
-    // bukan mengunduh seluruh embedding 5.000–10.000 produk.
-    const queryEmbedding = await getEmbeddingFromImageSource(imageFile);
+  async function createCenterCropFile(file) {
+    const img = await createImageElement(file);
+    try {
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      const sx = Math.max(0, Math.round((img.naturalWidth - side) / 2));
+      const sy = Math.max(0, Math.round((img.naturalHeight - side) / 2));
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 640;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, 640, 640);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+      if (!blob) throw new Error("Gagal membuat crop gambar untuk AI.");
+      return new File([blob], "ai-center-crop.jpg", { type: "image/jpeg" });
+    } finally {
+      if (img.__objectUrl) URL.revokeObjectURL(img.__objectUrl);
+    }
+  }
 
-    const { data, error } = await supabaseClient.rpc(
-      "match_product_images",
-      {
-        query_embedding: queryEmbedding,
-        match_threshold: 0.60,
-        match_count: 10
+  // V10.3: visual matching dibuat lebih tajam.
+  // MobileNet saja sering terlalu terpengaruh warna/background. Kita kombinasikan:
+  // 1) embedding foto asli
+  // 2) embedding center-crop
+  // 3) embedding grayscale (warna dihilangkan)
+  // 4) perceptual hash (pHash) grayscale untuk menangkap layout/bentuk yang sama.
+  async function createGrayImageFile(source, centerCrop = false) {
+    const img = await createImageElement(source);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 640;
+      const ctx = canvas.getContext("2d", { alpha: false });
+
+      if (centerCrop) {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = Math.max(0, Math.round((img.naturalWidth - side) / 2));
+        const sy = Math.max(0, Math.round((img.naturalHeight - side) / 2));
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, 640, 640);
+      } else {
+        ctx.drawImage(img, 0, 0, 640, 640);
       }
-    );
 
-    if (error) {
-      throw new Error(
-        "AI vector search belum diaktifkan. Jalankan SQL setup V10 di Supabase terlebih dahulu. Detail: " +
-        error.message
+      const imageData = ctx.getImageData(0, 0, 640, 640);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = Math.round(
+          0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+        );
+        data[i] = gray;
+        data[i + 1] = gray;
+        data[i + 2] = gray;
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      const blob = await new Promise(resolve =>
+        canvas.toBlob(resolve, "image/jpeg", 0.9)
+      );
+      if (!blob) throw new Error("Gagal membuat gambar grayscale AI.");
+      return new File([blob], "ai-gray.jpg", { type: "image/jpeg" });
+    } finally {
+      if (img.__objectUrl) URL.revokeObjectURL(img.__objectUrl);
+    }
+  }
+
+  async function getPerceptualHash(source, centerCrop = false) {
+    const img = await createImageElement(source);
+    try {
+      const size = 32;
+      const low = 8;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d", { alpha: false });
+
+      if (centerCrop) {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = Math.max(0, Math.round((img.naturalWidth - side) / 2));
+        const sy = Math.max(0, Math.round((img.naturalHeight - side) / 2));
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      } else {
+        ctx.drawImage(img, 0, 0, size, size);
+      }
+
+      const pixels = ctx.getImageData(0, 0, size, size).data;
+      const gray = new Float64Array(size * size);
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = (y * size + x) * 4;
+          gray[y * size + x] =
+            0.299 * pixels[i] +
+            0.587 * pixels[i + 1] +
+            0.114 * pixels[i + 2];
+        }
+      }
+
+      const coeffs = [];
+      for (let u = 0; u < low; u++) {
+        for (let v = 0; v < low; v++) {
+          let sum = 0;
+          for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+              sum +=
+                gray[y * size + x] *
+                Math.cos(((2 * x + 1) * u * Math.PI) / (2 * size)) *
+                Math.cos(((2 * y + 1) * v * Math.PI) / (2 * size));
+            }
+          }
+          coeffs.push(sum);
+        }
+      }
+
+      const ac = coeffs.slice(1);
+      const sorted = [...ac].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)] || 0;
+      return coeffs
+        .map((value, index) => index === 0 ? 0 : (value >= median ? 1 : 0))
+        .join("");
+    } finally {
+      if (img.__objectUrl) URL.revokeObjectURL(img.__objectUrl);
+    }
+  }
+
+  async function getStructureHash(source, centerCrop = false) {
+    const img = await createImageElement(source);
+    try {
+      const size = 32;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d", { alpha: false });
+
+      if (centerCrop) {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = Math.max(0, Math.round((img.naturalWidth - side) / 2));
+        const sy = Math.max(0, Math.round((img.naturalHeight - side) / 2));
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      } else {
+        ctx.drawImage(img, 0, 0, size, size);
+      }
+
+      const pixels = ctx.getImageData(0, 0, size, size).data;
+      const gray = new Float64Array(size * size);
+      let mean = 0;
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = (y * size + x) * 4;
+          const value =
+            0.299 * pixels[i] +
+            0.587 * pixels[i + 1] +
+            0.114 * pixels[i + 2];
+          gray[y * size + x] = value;
+          mean += value;
+        }
+      }
+      mean /= gray.length;
+
+      // Sobel edge fingerprint: lebih fokus ke bentuk/layout daripada warna.
+      const edges = new Float64Array(size * size);
+      let edgeMean = 0;
+      for (let y = 1; y < size - 1; y++) {
+        for (let x = 1; x < size - 1; x++) {
+          const gx =
+            -gray[(y - 1) * size + (x - 1)] + gray[(y - 1) * size + (x + 1)] +
+            -2 * gray[y * size + (x - 1)] + 2 * gray[y * size + (x + 1)] +
+            -gray[(y + 1) * size + (x - 1)] + gray[(y + 1) * size + (x + 1)];
+          const gy =
+            -gray[(y - 1) * size + (x - 1)] - 2 * gray[(y - 1) * size + x] - gray[(y - 1) * size + (x + 1)] +
+            gray[(y + 1) * size + (x - 1)] + 2 * gray[(y + 1) * size + x] + gray[(y + 1) * size + (x + 1)];
+          const magnitude = Math.sqrt(gx * gx + gy * gy);
+          edges[y * size + x] = magnitude;
+          edgeMean += magnitude;
+        }
+      }
+      edgeMean /= ((size - 2) * (size - 2));
+
+      let hash = "";
+      for (let y = 1; y < size - 1; y++) {
+        for (let x = 1; x < size - 1; x++) {
+          hash += edges[y * size + x] >= edgeMean ? "1" : "0";
+        }
+      }
+      return hash;
+    } finally {
+      if (img.__objectUrl) URL.revokeObjectURL(img.__objectUrl);
+    }
+  }
+
+  function hashSimilarity(a, b) {
+    if (!a || !b || a.length !== b.length) return 0;
+    let same = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === b[i]) same++;
+    }
+    return same / a.length;
+  }
+
+  async function getImageFingerprints(source) {
+    return {
+      fullHash: await getPerceptualHash(source, false),
+      cropHash: await getPerceptualHash(source, true),
+      structureHash: await getStructureHash(source, false),
+      cropStructureHash: await getStructureHash(source, true)
+    };
+  }
+
+  async function getImageHashFromUrl(url) {
+    try {
+      return await getImageFingerprints(url);
+    } catch (error) {
+      console.warn("Fingerprint produk lama tidak bisa dibaca:", error);
+      return null;
+    }
+  }
+
+  function normalizeFingerprint(value) {
+    if (!value) return null;
+    if (typeof value === "string") return { fullHash: value };
+    return value;
+  }
+
+  function fingerprintScore(a, b) {
+    a = normalizeFingerprint(a);
+    b = normalizeFingerprint(b);
+    if (!a || !b) return 0;
+
+    const scores = [
+      hashSimilarity(a.fullHash, b.fullHash),
+      hashSimilarity(a.cropHash, b.cropHash),
+      hashSimilarity(a.structureHash, b.structureHash),
+      hashSimilarity(a.cropStructureHash, b.cropStructureHash)
+    ].filter(v => v > 0);
+
+    if (!scores.length) return 0;
+    scores.sort((x, y) => y - x);
+    return scores[0] * 0.70 + (scores[1] || scores[0]) * 0.30;
+  }
+
+  async function findSimilarExistingProduct(imageFile) {
+    // V10.3: multi-signal yang lebih tajam untuk produk yang secara visual
+    // sama tetapi beda warna, background, crop, atau posisi objek.
+    const sources = [imageFile];
+    try { sources.push(await createCenterCropFile(imageFile)); } catch (e) {}
+    try { sources.push(await createGrayImageFile(imageFile, false)); } catch (e) {}
+    try { sources.push(await createGrayImageFile(imageFile, true)); } catch (e) {}
+
+    const queryFingerprint = await getImageFingerprints(imageFile);
+    const bestByProduct = new Map();
+
+    // Ambil kandidat lebih lebar. Jika MobileNet kurang peka terhadap warna/
+    // pose, salah satu crop masih punya peluang masuk kandidat.
+    for (const source of sources) {
+      const queryEmbedding = await getEmbeddingFromImageSource(source);
+      const { data, error } = await supabaseClient.rpc("match_product_images", {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.20,
+        match_count: 100
+      });
+      if (error) {
+        throw new Error(
+          "AI vector search belum diaktifkan. Jalankan SQL setup V10 di Supabase terlebih dahulu. Detail: " + error.message
+        );
+      }
+
+      for (const row of (data || [])) {
+        const product = row.product;
+        const vectorScore = Number(row.similarity) || 0;
+        const key = String(product?.id || product?.image_url || product?.name || "unknown");
+        const previous = bestByProduct.get(key);
+        if (!previous || vectorScore > previous.vectorScore) {
+          bestByProduct.set(key, {
+            product,
+            vectorScore,
+            fingerprintScore: previous?.fingerprintScore || 0,
+            fingerprint: previous?.fingerprint || null
+          });
+        }
+      }
+    }
+
+    if (!bestByProduct.size) return null;
+
+    const candidates = Array.from(bestByProduct.values())
+      .sort((a, b) => b.vectorScore - a.vectorScore)
+      .slice(0, 40);
+    // Hitung fingerprint hanya untuk 40 kandidat terdekat agar tetap ringan.
+    for (const item of candidates) {
+      try {
+        const existing = item.product?.metrics?.image_fingerprint ||
+          item.product?.metrics?.image_hash ||
+          (item.product?.image_url ? await getImageHashFromUrl(item.product.image_url) : null);
+        item.fingerprint = existing;
+        item.fingerprintScore = fingerprintScore(queryFingerprint, existing);
+      } catch (e) {
+        item.fingerprintScore = 0;
+      }
+
+      // Kombinasi sinyal. Untuk duplicate, dua sinyal kuat lebih penting
+      // daripada satu skor MobileNet yang kebetulan tinggi/rendah.
+      item.score = Math.max(
+        item.vectorScore,
+        item.fingerprintScore,
+        (item.vectorScore * 0.55) + (item.fingerprintScore * 0.45)
       );
     }
 
-    if (!data || !data.length) return null;
-
-    return {
-      product: data[0].product,
-      score: Number(data[0].similarity) || 0
-    };
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
   }
 
   function renderDuplicateWarning(match) {
     const percent = Math.round(match.score * 100);
-    const isDuplicate = match.score >= 0.90;
+    const isDuplicate = match.score >= 0.78;
 
     productMessage.innerHTML = `
       <div class="message error">
@@ -990,9 +1272,12 @@ Komisi: 5%"></textarea>
         <br>
         Kemiripan visual: <strong>${percent}%</strong>
         <br>
+        Sinyal AI: <strong>${match.vectorScore ? Math.round(match.vectorScore * 100) : 0}% vector</strong> · <strong>${match.hashScore ? Math.round(match.hashScore * 100) : 0}% pHash</strong> · <strong>${match.grayHashScore ? Math.round(match.grayHashScore * 100) : 0}% grayscale</strong>
+        <br>
         Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
         Produk baru <strong>tidak disimpan</strong> agar database tidak berisi produk yang sama/mirip.
+        <br><br>AI sekarang membandingkan <strong>bentuk/layout + foto grayscale + embedding visual</strong>, jadi perubahan warna atau background tidak langsung membuat produk dianggap baru.
         ${match.product.image_url ? `
           <br>
           <img
@@ -1016,7 +1301,7 @@ Komisi: 5%"></textarea>
         <br>
         Produk yang paling mirip: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
-        <small>Rentang 72–81% dianggap mirip, bukan duplikat pasti. Kamu tetap bisa menyimpan produk berbeda.</small>
+        <small>AI melihat kemiripan bentuk/layout, crop, grayscale, dan embedding visual. Jika sinyal belum cukup kuat, produk tetap boleh disimpan.</small>
         ${match.product.image_url ? `
           <br>
           <img
@@ -1067,16 +1352,21 @@ Komisi: 5%"></textarea>
       );
 
       const bestMatch = await findSimilarExistingProduct(imageFile);
-      const similarMatch = bestMatch && bestMatch.score >= 0.72 ? bestMatch : null;
 
-      // >=82% tetap diblokir agar database tidak dipenuhi duplikat/mirip sekali.
-      if (bestMatch && bestMatch.score >= 0.82) {
+      // V10.3: blokir jika sinyal visual menunjukkan produk yang sama/sangat mirip.
+      // Threshold dibuat agresif, tetapi tidak hanya mengandalkan MobileNet.
+      if (bestMatch && (
+        bestMatch.score >= 0.72 ||
+        bestMatch.fingerprintScore >= 0.76 ||
+        (bestMatch.vectorScore >= 0.45 && bestMatch.fingerprintScore >= 0.62)
+      )) {
         renderDuplicateWarning(bestMatch);
         return;
       }
 
-      // 72–81% terdeteksi sebagai produk mirip, tetapi tetap boleh disimpan.
-      // <72% dianggap tidak cukup mirip.
+      const similarMatch = bestMatch && bestMatch.score >= 0.50 ? bestMatch : null;
+
+      // Di bawah ambang duplicate, produk tetap boleh disimpan.
       // Upload foto utama produk
       const productUpload = await uploadImage(
         imageFile,
@@ -1143,7 +1433,9 @@ Komisi: 5%"></textarea>
             raw: metricText,
             images: metricImageUrls,
             category: category,
-            embedding: productEmbedding
+            embedding: productEmbedding,
+            image_hash: (await getPerceptualHash(imageFile, false)),
+            image_fingerprint: await getImageFingerprints(imageFile)
           },
           embedding_vector: productEmbedding,
           notes: noteText
