@@ -475,6 +475,7 @@ Komisi: 5%"></textarea>
 
   let mobileNetModel = null;
   let currentProducts = [];
+  let forceSaveNext = false;
 
   // Tampilan produk memakai pagination supaya 5.000–10.000 produk
   // tidak dimuat dan dirender sekaligus di browser.
@@ -1400,9 +1401,9 @@ Komisi: 5%"></textarea>
         <br>
         Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
-        <strong>Keputusan AI: TIDAK DISIMPAN.</strong>
+        <strong>Keputusan AI: TIDAK DISIMPAN OTOMATIS.</strong>
         <br>
-        MobileNet/vector tidak lagi boleh memblokir sendirian. Produk diblokir karena ada minimal dua sinyal yang saling menguatkan (visual + fingerprint), atau satu sinyal yang benar-benar sangat kuat.
+        AI menemukan kemiripan yang cukup kuat. Tapi keputusan akhir tetap kamu yang tentukan.
         ${match.product.image_url ? `
           <br>
           <img
@@ -1411,8 +1412,21 @@ Komisi: 5%"></textarea>
             style="width:110px;height:110px;object-fit:cover;border-radius:10px;margin-top:9px;border:1px solid #e5e7eb;"
           >
         ` : ""}
+        <br><br>
+        <button id="forceSaveBtn" type="button" class="primary" style="margin-top:4px;">✅ Tetap Simpan Produk Ini</button>
+        <div style="font-size:12px;margin-top:8px;color:#7f1d1d;">
+          Jika kamu yakin ini produk berbeda, klik tombol di atas. Produk akan disimpan tanpa mengulang pengecekan AI.
+        </div>
       </div>
     `;
+
+    const forceSaveBtn = document.getElementById("forceSaveBtn");
+    if (forceSaveBtn) {
+      forceSaveBtn.addEventListener("click", () => {
+        forceSaveNext = true;
+        saveBtn.click();
+      });
+    }
   }
 
   function renderSimilarNotice(match) {
@@ -1460,6 +1474,9 @@ Komisi: 5%"></textarea>
     saveBtn.disabled = true;
     saveBtn.textContent = "⏳ Menyimpan...";
 
+    const bypassAiCheck = forceSaveNext;
+    forceSaveNext = false;
+
     try {
       const {
         data: { user }
@@ -1476,20 +1493,27 @@ Komisi: 5%"></textarea>
         "success"
       );
 
-      const bestMatch = await findSimilarExistingProduct(imageFile, name);
+      let bestMatch = null;
 
-      // V10.6: JANGAN memblokir hanya karena MobileNet/vector terlihat mirip.
-      // Harus ada dua sinyal visual yang saling menguatkan agar produk benar-benar diblokir.
-      if (bestMatch && isLikelyDuplicate(bestMatch)) {
-        renderDuplicateWarning(bestMatch);
-        return;
+      if (!bypassAiCheck) {
+        bestMatch = await findSimilarExistingProduct(imageFile, name);
+
+        // AI menjadi penjaga otomatis, tetapi user tetap punya keputusan akhir.
+        // Jika AI yakin duplikat, tampilkan tombol "Tetap Simpan" dan hentikan
+        // proses sementara. Produk belum di-upload sebelum user memilih.
+        if (bestMatch && isLikelyDuplicate(bestMatch)) {
+          renderDuplicateWarning(bestMatch);
+          saveBtn.disabled = false;
+          saveBtn.textContent = "💾 Simpan Produk";
+          return;
+        }
       }
 
-      // V10.7: Jangan menampilkan "produk mirip" hanya karena MobileNet
+      // V10.8: Jangan menampilkan "produk mirip" hanya karena MobileNet
       // menemukan kemiripan kategori/jenis barang. Skor seperti 60-70%
       // sering berarti sama-sama pakaian/jaket/parfum, bukan produk yang sama.
       // Untuk notice kemiripan, harus ada sinyal yang lebih kuat.
-      const similarMatch = bestMatch && (
+      const similarMatch = (!bypassAiCheck && bestMatch) && (
         bestMatch.fingerprintScore >= 0.65 ||
         bestMatch.vectorScore >= 0.85 ||
         (bestMatch.vectorScore >= 0.78 && bestMatch.nameScore >= 0.45)
