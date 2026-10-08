@@ -1420,13 +1420,13 @@ Komisi: 5%"></textarea>
 
     productMessage.innerHTML = `
       <div class="message success">
-        <strong>🟡 AI menemukan produk yang mirip, tetapi produk tetap disimpan.</strong>
+        <strong>🟡 AI menemukan kandidat produk yang cukup mirip, tetapi produk tetap disimpan.</strong>
         <br>
         Kemiripan visual: <strong>${percent}%</strong>
         <br>
         Produk yang paling mirip: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
-        <small>AI melihat kemiripan bentuk/layout, crop, grayscale, dan embedding visual. Jika sinyal belum cukup kuat, produk tetap boleh disimpan.</small>
+        <small>Notice ini hanya muncul jika sinyal visual cukup kuat. Kemiripan kategori umum seperti "sama-sama jaket/baju" tidak dianggap sebagai produk yang sama.</small>
         ${match.product.image_url ? `
           <br>
           <img
@@ -1485,7 +1485,15 @@ Komisi: 5%"></textarea>
         return;
       }
 
-      const similarMatch = bestMatch && (bestMatch.vectorScore >= 0.55 || bestMatch.fingerprintScore >= 0.55)
+      // V10.7: Jangan menampilkan "produk mirip" hanya karena MobileNet
+      // menemukan kemiripan kategori/jenis barang. Skor seperti 60-70%
+      // sering berarti sama-sama pakaian/jaket/parfum, bukan produk yang sama.
+      // Untuk notice kemiripan, harus ada sinyal yang lebih kuat.
+      const similarMatch = bestMatch && (
+        bestMatch.fingerprintScore >= 0.65 ||
+        bestMatch.vectorScore >= 0.85 ||
+        (bestMatch.vectorScore >= 0.78 && bestMatch.nameScore >= 0.45)
+      )
         ? bestMatch
         : null;
 
