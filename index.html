@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Database Produk Affiliate</title>
+  <title>Database Produk Affiliate — V10.4</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
@@ -1191,44 +1191,106 @@ Komisi: 5%"></textarea>
   }
 
   async function findSimilarExistingProduct(imageFile) {
-    // V10.3: multi-signal yang lebih tajam untuk produk yang secara visual
-    // sama tetapi beda warna, background, crop, atau posisi objek.
+    // V10.4: pgvector adalah jalur utama. Jika RPC gagal/network error,
+    // otomatis gunakan fallback lokal agar proses tidak langsung gagal.
     const sources = [imageFile];
     try { sources.push(await createCenterCropFile(imageFile)); } catch (e) {}
     try { sources.push(await createGrayImageFile(imageFile, false)); } catch (e) {}
     try { sources.push(await createGrayImageFile(imageFile, true)); } catch (e) {}
 
     const queryFingerprint = await getImageFingerprints(imageFile);
-    const bestByProduct = new Map();
-
-    // Ambil kandidat lebih lebar. Jika MobileNet kurang peka terhadap warna/
-    // pose, salah satu crop masih punya peluang masuk kandidat.
+    const sourceEmbeddings = [];
     for (const source of sources) {
-      const queryEmbedding = await getEmbeddingFromImageSource(source);
-      const { data, error } = await supabaseClient.rpc("match_product_images", {
-        query_embedding: queryEmbedding,
-        match_threshold: 0.20,
-        match_count: 100
-      });
-      if (error) {
-        throw new Error(
-          "AI vector search belum diaktifkan. Jalankan SQL setup V10 di Supabase terlebih dahulu. Detail: " + error.message
-        );
+      try { sourceEmbeddings.push(await getEmbeddingFromImageSource(source)); } catch (e) {}
+    }
+    const bestByProduct = new Map();
+    let vectorSearchWorked = false;
+
+    // Jalur utama: pgvector. Retry sekali jika request pertama gagal.
+    for (const queryEmbedding of sourceEmbeddings) {
+      let rpcResult = null;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          rpcResult = await supabaseClient.rpc("match_product_images", {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.20,
+            match_count: 100
+          });
+          if (!rpcResult.error) break;
+          if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (rpcException) {
+          rpcResult = { data: null, error: rpcException };
+          if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
 
-      for (const row of (data || [])) {
-        const product = row.product;
-        const vectorScore = Number(row.similarity) || 0;
-        const key = String(product?.id || product?.image_url || product?.name || "unknown");
-        const previous = bestByProduct.get(key);
-        if (!previous || vectorScore > previous.vectorScore) {
-          bestByProduct.set(key, {
-            product,
-            vectorScore,
-            fingerprintScore: previous?.fingerprintScore || 0,
-            fingerprint: previous?.fingerprint || null
-          });
+      if (rpcResult && !rpcResult.error) {
+        vectorSearchWorked = true;
+        for (const row of (rpcResult.data || [])) {
+          const product = row.product;
+          const vectorScore = Number(row.similarity) || 0;
+          const key = String(product?.id || product?.image_url || product?.name || "unknown");
+          const previous = bestByProduct.get(key);
+          if (!previous || vectorScore > previous.vectorScore) {
+            bestByProduct.set(key, {
+              product,
+              vectorScore,
+              fingerprintScore: previous?.fingerprintScore || 0,
+              fingerprint: previous?.fingerprint || null
+            });
+          }
         }
+      }
+    }
+
+    // Fallback: kalau RPC gagal, ambil embedding JSON dari products secara bertahap.
+    // Ini memang lebih berat, tetapi memastikan fitur tetap bekerja walau RPC sedang bermasalah.
+    if (!vectorSearchWorked) {
+      showMessage(
+        productMessage,
+        "🔄 Vector search tidak merespons. AI beralih ke mode fallback agar produk tetap bisa dicek...",
+        "success"
+      );
+
+      const fallbackCandidates = new Map();
+      const PAGE_SIZE = 500;
+      let from = 0;
+
+      while (true) {
+        const { data, error } = await supabaseClient
+          .from("products")
+          .select("id,name,image_url,metrics,created_at")
+          .order("created_at", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) throw new Error("Fallback AI juga gagal mengambil database: " + error.message);
+        if (!data || !data.length) break;
+
+        for (const product of data) {
+          const embedding = product?.metrics?.embedding;
+          if (!Array.isArray(embedding) || embedding.length !== 1280) continue;
+
+          let bestVector = 0;
+          for (const sourceEmbedding of sourceEmbeddings) {
+            bestVector = Math.max(bestVector, cosineSimilarity(sourceEmbedding, embedding));
+          }
+
+          const key = String(product.id || product.image_url || product.name || Math.random());
+          fallbackCandidates.set(key, { product, vectorScore: bestVector });
+        }
+
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+
+      for (const item of fallbackCandidates.values()) {
+        bestByProduct.set(String(item.product.id || item.product.image_url || item.product.name), {
+          product: item.product,
+          vectorScore: item.vectorScore,
+          fingerprintScore: 0,
+          fingerprint: null
+        });
       }
     }
 
@@ -1236,8 +1298,9 @@ Komisi: 5%"></textarea>
 
     const candidates = Array.from(bestByProduct.values())
       .sort((a, b) => b.vectorScore - a.vectorScore)
-      .slice(0, 40);
-    // Hitung fingerprint hanya untuk 40 kandidat terdekat agar tetap ringan.
+      .slice(0, 60);
+
+    // Fingerprint hanya dihitung untuk kandidat terdekat.
     for (const item of candidates) {
       try {
         const existing = item.product?.metrics?.image_fingerprint ||
@@ -1249,12 +1312,11 @@ Komisi: 5%"></textarea>
         item.fingerprintScore = 0;
       }
 
-      // Kombinasi sinyal. Untuk duplicate, dua sinyal kuat lebih penting
-      // daripada satu skor MobileNet yang kebetulan tinggi/rendah.
+      // Untuk produk yang sangat mirip, sinyal fingerprint diberi bobot kuat.
       item.score = Math.max(
         item.vectorScore,
         item.fingerprintScore,
-        (item.vectorScore * 0.55) + (item.fingerprintScore * 0.45)
+        (item.vectorScore * 0.50) + (item.fingerprintScore * 0.50)
       );
     }
 
@@ -1356,15 +1418,15 @@ Komisi: 5%"></textarea>
       // V10.3: blokir jika sinyal visual menunjukkan produk yang sama/sangat mirip.
       // Threshold dibuat agresif, tetapi tidak hanya mengandalkan MobileNet.
       if (bestMatch && (
-        bestMatch.score >= 0.72 ||
-        bestMatch.fingerprintScore >= 0.76 ||
-        (bestMatch.vectorScore >= 0.45 && bestMatch.fingerprintScore >= 0.62)
+        bestMatch.score >= 0.68 ||
+        bestMatch.fingerprintScore >= 0.72 ||
+        (bestMatch.vectorScore >= 0.42 && bestMatch.fingerprintScore >= 0.58)
       )) {
         renderDuplicateWarning(bestMatch);
         return;
       }
 
-      const similarMatch = bestMatch && bestMatch.score >= 0.50 ? bestMatch : null;
+      const similarMatch = bestMatch && bestMatch.score >= 0.45 ? bestMatch : null;
 
       // Di bawah ambang duplicate, produk tetap boleh disimpan.
       // Upload foto utama produk
