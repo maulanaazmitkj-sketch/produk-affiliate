@@ -971,6 +971,27 @@ Komisi: 5%"></textarea>
     }
   }
 
+  async function createFocusCropFile(source) {
+    const img = await createImageElement(source);
+    try {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const cropW = Math.round(w * 0.72);
+      const cropH = Math.round(h * 0.82);
+      const sx = Math.max(0, Math.round((w - cropW) / 2));
+      const sy = Math.max(0, Math.round((h - cropH) / 2));
+      const canvas = document.createElement("canvas");
+      canvas.width = 640; canvas.height = 640;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.drawImage(img, sx, sy, cropW, cropH, 0, 0, 640, 640);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+      if (!blob) throw new Error("Gagal membuat focus crop AI.");
+      return new File([blob], "ai-focus-crop.jpg", { type: "image/jpeg" });
+    } finally {
+      if (img.__objectUrl) URL.revokeObjectURL(img.__objectUrl);
+    }
+  }
+
   // V10.3: visual matching dibuat lebih tajam.
   // MobileNet saja sering terlalu terpengaruh warna/background. Kita kombinasikan:
   // 1) embedding foto asli
@@ -1223,31 +1244,29 @@ Komisi: 5%"></textarea>
   }
 
   async function findSimilarExistingProduct(imageFile, candidateName = "") {
-    // V10.6: pgvector adalah jalur utama. Jika RPC gagal/network error,
-    // otomatis gunakan fallback lokal agar proses tidak langsung gagal.
+    // V11: multi-view product matching.
     const sources = [imageFile];
     try { sources.push(await createCenterCropFile(imageFile)); } catch (e) {}
-    try { sources.push(await createGrayImageFile(imageFile, false)); } catch (e) {}
-    try { sources.push(await createGrayImageFile(imageFile, true)); } catch (e) {}
+    try { sources.push(await createFocusCropFile(imageFile)); } catch (e) {}
 
-    const queryFingerprint = await getImageFingerprints(imageFile);
     const sourceEmbeddings = [];
     for (const source of sources) {
       try { sourceEmbeddings.push(await getEmbeddingFromImageSource(source)); } catch (e) {}
     }
+    if (!sourceEmbeddings.length) return null;
+
     const bestByProduct = new Map();
     let vectorSearchWorked = false;
 
-    // Jalur utama: pgvector. Retry sekali jika request pertama gagal.
+    // pgvector hanya untuk mengambil kandidat; bukan keputusan akhir.
     for (const queryEmbedding of sourceEmbeddings) {
       let rpcResult = null;
-
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           rpcResult = await supabaseClient.rpc("match_product_images", {
             query_embedding: queryEmbedding,
             match_threshold: 0.20,
-            match_count: 100
+            match_count: 80
           });
           if (!rpcResult.error) break;
           if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
@@ -1266,99 +1285,77 @@ Komisi: 5%"></textarea>
           const previous = bestByProduct.get(key);
           if (!previous || vectorScore > previous.vectorScore) {
             bestByProduct.set(key, {
-              product,
-              vectorScore,
+              product, vectorScore,
               nameScore: productNameSimilarity(candidateName, product?.name),
-              fingerprintScore: previous?.fingerprintScore || 0,
-              fingerprint: previous?.fingerprint || null
+              multiViewScore: 0, matchedViews: 0
             });
           }
         }
       }
     }
 
-    // Fallback: kalau RPC gagal, ambil embedding JSON dari products secara bertahap.
-    // Ini memang lebih berat, tetapi memastikan fitur tetap bekerja walau RPC sedang bermasalah.
+    // Fallback jika RPC tidak tersedia.
     if (!vectorSearchWorked) {
-      showMessage(
-        productMessage,
-        "🔄 Vector search tidak merespons. AI beralih ke mode fallback agar produk tetap bisa dicek...",
-        "success"
-      );
-
+      showMessage(productMessage, "🔄 Vector search tidak merespons. AI beralih ke mode fallback agar produk tetap bisa dicek...", "success");
       const fallbackCandidates = new Map();
       const PAGE_SIZE = 500;
       let from = 0;
-
       while (true) {
         const { data, error } = await supabaseClient
-          .from("products")
-          .select("id,name,image_url,metrics,created_at")
+          .from("products").select("id,name,image_url,metrics,created_at")
           .order("created_at", { ascending: false })
           .range(from, from + PAGE_SIZE - 1);
-
         if (error) throw new Error("Fallback AI juga gagal mengambil database: " + error.message);
         if (!data || !data.length) break;
-
         for (const product of data) {
           const embedding = product?.metrics?.embedding;
           if (!Array.isArray(embedding) || embedding.length !== 1280) continue;
-
           let bestVector = 0;
-          for (const sourceEmbedding of sourceEmbeddings) {
-            bestVector = Math.max(bestVector, cosineSimilarity(sourceEmbedding, embedding));
-          }
-
+          for (const q of sourceEmbeddings) bestVector = Math.max(bestVector, cosineSimilarity(q, embedding));
           const key = String(product.id || product.image_url || product.name || Math.random());
-          fallbackCandidates.set(key, {
-          product,
-          vectorScore: bestVector,
-          nameScore: productNameSimilarity(candidateName, product?.name)
-        });
+          fallbackCandidates.set(key, { product, vectorScore: bestVector, nameScore: productNameSimilarity(candidateName, product?.name) });
         }
-
         if (data.length < PAGE_SIZE) break;
         from += PAGE_SIZE;
       }
-
       for (const item of fallbackCandidates.values()) {
         bestByProduct.set(String(item.product.id || item.product.image_url || item.product.name), {
-          product: item.product,
-          vectorScore: item.vectorScore,
-          nameScore: item.nameScore || productNameSimilarity(candidateName, item.product?.name),
-          fingerprintScore: 0,
-          fingerprint: null
+          product: item.product, vectorScore: item.vectorScore, nameScore: item.nameScore || 0, multiViewScore: 0, matchedViews: 0
         });
       }
     }
 
     if (!bestByProduct.size) return null;
 
+    // Deep check hanya untuk 15 kandidat teratas agar tetap cepat pada 5k-10k produk.
     const candidates = Array.from(bestByProduct.values())
-      .sort((a, b) => Math.max(b.vectorScore || 0, b.fingerprintScore || 0) - Math.max(a.vectorScore || 0, a.fingerprintScore || 0))
-      .slice(0, 60);
+      .sort((a, b) => (b.vectorScore || 0) - (a.vectorScore || 0))
+      .slice(0, 15);
 
-    // Fingerprint hanya dihitung untuk kandidat terdekat.
     for (const item of candidates) {
       try {
-        const existing = item.product?.metrics?.image_fingerprint ||
-          item.product?.metrics?.image_hash ||
-          (item.product?.image_url ? await getImageHashFromUrl(item.product.image_url) : null);
-        item.fingerprint = existing;
-        item.fingerprintScore = fingerprintScore(queryFingerprint, existing);
-      } catch (e) {
-        item.fingerprintScore = 0;
-      }
+        const candidateSources = [item.product.image_url];
+        try { candidateSources.push(await createCenterCropFile(item.product.image_url)); } catch (e) {}
+        try { candidateSources.push(await createFocusCropFile(item.product.image_url)); } catch (e) {}
+        const candidateEmbeddings = [];
+        for (const source of candidateSources) {
+          try { candidateEmbeddings.push(await getEmbeddingFromImageSource(source)); } catch (e) {}
+        }
 
-      // Untuk produk yang sangat mirip, sinyal fingerprint diberi bobot kuat.
-      item.nameScore = item.nameScore || productNameSimilarity(candidateName, item.product?.name);
-      item.score = Math.max(
-        item.vectorScore,
-        item.fingerprintScore,
-        (item.vectorScore * 0.50) + (item.fingerprintScore * 0.50),
-        item.nameScore >= 0.90 ? Math.min(0.90, item.vectorScore + 0.10) : 0,
-        item.nameScore >= 0.55 ? Math.min(0.84, item.vectorScore + 0.06) : 0
-      );
+        const pairScores = [];
+        for (const q of sourceEmbeddings) {
+          let bestForQuery = 0;
+          for (const c of candidateEmbeddings) bestForQuery = Math.max(bestForQuery, cosineSimilarity(q, c));
+          pairScores.push(bestForQuery);
+        }
+        pairScores.sort((a, b) => b - a);
+        item.multiViewScore = pairScores.length ? pairScores[0] * 0.60 + (pairScores[1] || pairScores[0]) * 0.40 : 0;
+        item.matchedViews = pairScores.filter(v => v >= 0.84).length;
+      } catch (e) {
+        item.multiViewScore = 0; item.matchedViews = 0;
+      }
+      item.nameScore = productNameSimilarity(candidateName, item.product?.name);
+      item.score = Math.max(item.multiViewScore, (item.vectorScore * 0.35) + (item.multiViewScore * 0.65));
     }
 
     candidates.sort((a, b) => b.score - a.score);
@@ -1367,43 +1364,39 @@ Komisi: 5%"></textarea>
 
   function isLikelyDuplicate(match) {
     if (!match) return false;
-
     const v = Number(match.vectorScore) || 0;
-    const f = Number(match.fingerprintScore) || 0;
+    const m = Number(match.multiViewScore) || 0;
     const n = Number(match.nameScore) || 0;
+    const views = Number(match.matchedViews) || 0;
 
-    // PENTING: MobileNet saja tidak boleh memblokir produk.
-    // Model ini bisa menganggap dua barang dalam kelas yang sama sebagai mirip.
-    // Untuk memblokir, kita minta minimal dua sinyal visual yang saling menguatkan.
-    if (v >= 0.90) return true;
-    if (f >= 0.90) return true;
-    if (v >= 0.78 && f >= 0.62) return true;
-    if (f >= 0.78 && v >= 0.62) return true;
-    if (v >= 0.70 && f >= 0.70) return true;
-
-    // Nama hanya menjadi penguat, bukan penentu tunggal.
-    if (n >= 0.90 && v >= 0.68 && f >= 0.55) return true;
-
+    // MobileNet global score saja tidak boleh memblokir.
+    if (m >= 0.90) return true;
+    if (views >= 2 && m >= 0.84) return true;
+    if (m >= 0.86 && v >= 0.78) return true;
+    if (m >= 0.82 && n >= 0.90 && v >= 0.75) return true;
     return false;
   }
 
   function renderDuplicateWarning(match) {
     const v = Math.round((match.vectorScore || 0) * 100);
-    const f = Math.round((match.fingerprintScore || 0) * 100);
+    const m = Math.round((match.multiViewScore || 0) * 100);
     const n = Math.round((match.nameScore || 0) * 100);
+    const views = Number(match.matchedViews || 0);
     const isDuplicate = isLikelyDuplicate(match);
 
     productMessage.innerHTML = `
       <div class="message error">
         <strong>${isDuplicate ? "🔴 Produk kemungkinan sudah pernah disimpan!" : "🟠 Produk terlalu mirip dengan yang sudah ada!"}</strong>
         <br>
-        <strong>Vector visual: ${v}%</strong> · <strong>Fingerprint foto: ${f}%</strong> · <strong>Nama: ${n}%</strong>
+        <strong>Vector global: ${v}%</strong> · <strong>Deep multi-view: ${m}%</strong> · <strong>Nama: ${n}%</strong>
+        <br>
+        View yang sangat cocok: <strong>${views}</strong>
         <br>
         Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
         <strong>Keputusan AI: TIDAK DISIMPAN OTOMATIS.</strong>
         <br>
-        AI menemukan kemiripan yang cukup kuat. Tapi keputusan akhir tetap kamu yang tentukan.
+        AI menemukan kemiripan produk yang cukup kuat dari beberapa crop/view. Tapi keputusan akhir tetap kamu yang tentukan.
         ${match.product.image_url ? `
           <br>
           <img
@@ -1430,7 +1423,7 @@ Komisi: 5%"></textarea>
   }
 
   function renderSimilarNotice(match) {
-    const percent = Math.round(match.score * 100);
+    const percent = Math.round((match.multiViewScore || match.score || 0) * 100);
 
     productMessage.innerHTML = `
       <div class="message success">
@@ -1514,9 +1507,8 @@ Komisi: 5%"></textarea>
       // sering berarti sama-sama pakaian/jaket/parfum, bukan produk yang sama.
       // Untuk notice kemiripan, harus ada sinyal yang lebih kuat.
       const similarMatch = (!bypassAiCheck && bestMatch) && (
-        bestMatch.fingerprintScore >= 0.65 ||
-        bestMatch.vectorScore >= 0.85 ||
-        (bestMatch.vectorScore >= 0.78 && bestMatch.nameScore >= 0.45)
+        bestMatch.multiViewScore >= 0.78 ||
+        (bestMatch.multiViewScore >= 0.72 && bestMatch.vectorScore >= 0.75)
       )
         ? bestMatch
         : null;
