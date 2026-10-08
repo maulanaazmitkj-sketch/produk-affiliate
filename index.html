@@ -1190,7 +1190,38 @@ Komisi: 5%"></textarea>
     return scores[0] * 0.70 + (scores[1] || scores[0]) * 0.30;
   }
 
-  async function findSimilarExistingProduct(imageFile) {
+  function normalizeProductName(name) {
+    return String(name || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function productNameSimilarity(a, b) {
+    const x = normalizeProductName(a);
+    const y = normalizeProductName(b);
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+
+    const ax = new Set(x.split(" ").filter(Boolean));
+    const by = new Set(y.split(" ").filter(Boolean));
+    const intersection = [...ax].filter(token => by.has(token)).length;
+    const union = new Set([...ax, ...by]).size;
+    const jaccard = union ? intersection / union : 0;
+
+    const compactX = x.replace(/\s/g, "");
+    const compactY = y.replace(/\s/g, "");
+    const shorter = Math.min(compactX.length, compactY.length);
+    const longer = Math.max(compactX.length, compactY.length);
+    const prefix = shorter && compactX.slice(0, shorter) === compactY.slice(0, shorter) ? shorter / longer : 0;
+
+    return Math.max(jaccard, prefix * 0.9);
+  }
+
+  async function findSimilarExistingProduct(imageFile, candidateName = "") {
     // V10.4: pgvector adalah jalur utama. Jika RPC gagal/network error,
     // otomatis gunakan fallback lokal agar proses tidak langsung gagal.
     const sources = [imageFile];
@@ -1236,6 +1267,7 @@ Komisi: 5%"></textarea>
             bestByProduct.set(key, {
               product,
               vectorScore,
+              nameScore: productNameSimilarity(candidateName, product?.name),
               fingerprintScore: previous?.fingerprintScore || 0,
               fingerprint: previous?.fingerprint || null
             });
@@ -1277,7 +1309,11 @@ Komisi: 5%"></textarea>
           }
 
           const key = String(product.id || product.image_url || product.name || Math.random());
-          fallbackCandidates.set(key, { product, vectorScore: bestVector });
+          fallbackCandidates.set(key, {
+          product,
+          vectorScore: bestVector,
+          nameScore: productNameSimilarity(candidateName, product?.name)
+        });
         }
 
         if (data.length < PAGE_SIZE) break;
@@ -1288,6 +1324,7 @@ Komisi: 5%"></textarea>
         bestByProduct.set(String(item.product.id || item.product.image_url || item.product.name), {
           product: item.product,
           vectorScore: item.vectorScore,
+          nameScore: item.nameScore || productNameSimilarity(candidateName, item.product?.name),
           fingerprintScore: 0,
           fingerprint: null
         });
@@ -1313,10 +1350,13 @@ Komisi: 5%"></textarea>
       }
 
       // Untuk produk yang sangat mirip, sinyal fingerprint diberi bobot kuat.
+      item.nameScore = item.nameScore || productNameSimilarity(candidateName, item.product?.name);
       item.score = Math.max(
         item.vectorScore,
         item.fingerprintScore,
-        (item.vectorScore * 0.50) + (item.fingerprintScore * 0.50)
+        (item.vectorScore * 0.50) + (item.fingerprintScore * 0.50),
+        item.nameScore >= 0.90 ? Math.min(0.90, item.vectorScore + 0.10) : 0,
+        item.nameScore >= 0.55 ? Math.min(0.84, item.vectorScore + 0.06) : 0
       );
     }
 
@@ -1334,7 +1374,7 @@ Komisi: 5%"></textarea>
         <br>
         Kemiripan visual: <strong>${percent}%</strong>
         <br>
-        Sinyal AI: <strong>${match.vectorScore ? Math.round(match.vectorScore * 100) : 0}% vector</strong> · <strong>${match.hashScore ? Math.round(match.hashScore * 100) : 0}% pHash</strong> · <strong>${match.grayHashScore ? Math.round(match.grayHashScore * 100) : 0}% grayscale</strong>
+        Sinyal AI: <strong>${match.vectorScore ? Math.round(match.vectorScore * 100) : 0}% vector</strong> · <strong>${match.fingerprintScore ? Math.round(match.fingerprintScore * 100) : 0}% struktur/foto</strong> · <strong>${match.nameScore ? Math.round(match.nameScore * 100) : 0}% nama</strong>
         <br>
         Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
@@ -1413,14 +1453,16 @@ Komisi: 5%"></textarea>
         "success"
       );
 
-      const bestMatch = await findSimilarExistingProduct(imageFile);
+      const bestMatch = await findSimilarExistingProduct(imageFile, name);
 
       // V10.3: blokir jika sinyal visual menunjukkan produk yang sama/sangat mirip.
       // Threshold dibuat agresif, tetapi tidak hanya mengandalkan MobileNet.
       if (bestMatch && (
-        bestMatch.score >= 0.68 ||
-        bestMatch.fingerprintScore >= 0.72 ||
-        (bestMatch.vectorScore >= 0.42 && bestMatch.fingerprintScore >= 0.58)
+        bestMatch.score >= 0.60 ||
+        bestMatch.fingerprintScore >= 0.68 ||
+        (bestMatch.vectorScore >= 0.38 && bestMatch.fingerprintScore >= 0.52) ||
+        (bestMatch.nameScore >= 0.90 && bestMatch.vectorScore >= 0.45) ||
+        (bestMatch.nameScore >= 0.55 && bestMatch.vectorScore >= 0.54)
       )) {
         renderDuplicateWarning(bestMatch);
         return;
