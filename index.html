@@ -1222,7 +1222,7 @@ Komisi: 5%"></textarea>
   }
 
   async function findSimilarExistingProduct(imageFile, candidateName = "") {
-    // V10.4: pgvector adalah jalur utama. Jika RPC gagal/network error,
+    // V10.6: pgvector adalah jalur utama. Jika RPC gagal/network error,
     // otomatis gunakan fallback lokal agar proses tidak langsung gagal.
     const sources = [imageFile];
     try { sources.push(await createCenterCropFile(imageFile)); } catch (e) {}
@@ -1334,7 +1334,7 @@ Komisi: 5%"></textarea>
     if (!bestByProduct.size) return null;
 
     const candidates = Array.from(bestByProduct.values())
-      .sort((a, b) => b.vectorScore - a.vectorScore)
+      .sort((a, b) => Math.max(b.vectorScore || 0, b.fingerprintScore || 0) - Math.max(a.vectorScore || 0, a.fingerprintScore || 0))
       .slice(0, 60);
 
     // Fingerprint hanya dihitung untuk kandidat terdekat.
@@ -1364,22 +1364,45 @@ Komisi: 5%"></textarea>
     return candidates[0] || null;
   }
 
+  function isLikelyDuplicate(match) {
+    if (!match) return false;
+
+    const v = Number(match.vectorScore) || 0;
+    const f = Number(match.fingerprintScore) || 0;
+    const n = Number(match.nameScore) || 0;
+
+    // PENTING: MobileNet saja tidak boleh memblokir produk.
+    // Model ini bisa menganggap dua barang dalam kelas yang sama sebagai mirip.
+    // Untuk memblokir, kita minta minimal dua sinyal visual yang saling menguatkan.
+    if (v >= 0.90) return true;
+    if (f >= 0.90) return true;
+    if (v >= 0.78 && f >= 0.62) return true;
+    if (f >= 0.78 && v >= 0.62) return true;
+    if (v >= 0.70 && f >= 0.70) return true;
+
+    // Nama hanya menjadi penguat, bukan penentu tunggal.
+    if (n >= 0.90 && v >= 0.68 && f >= 0.55) return true;
+
+    return false;
+  }
+
   function renderDuplicateWarning(match) {
-    const percent = Math.round(match.score * 100);
-    const isDuplicate = match.score >= 0.78;
+    const v = Math.round((match.vectorScore || 0) * 100);
+    const f = Math.round((match.fingerprintScore || 0) * 100);
+    const n = Math.round((match.nameScore || 0) * 100);
+    const isDuplicate = isLikelyDuplicate(match);
 
     productMessage.innerHTML = `
       <div class="message error">
         <strong>${isDuplicate ? "🔴 Produk kemungkinan sudah pernah disimpan!" : "🟠 Produk terlalu mirip dengan yang sudah ada!"}</strong>
         <br>
-        Kemiripan visual: <strong>${percent}%</strong>
-        <br>
-        Sinyal AI: <strong>${match.vectorScore ? Math.round(match.vectorScore * 100) : 0}% vector</strong> · <strong>${match.fingerprintScore ? Math.round(match.fingerprintScore * 100) : 0}% struktur/foto</strong> · <strong>${match.nameScore ? Math.round(match.nameScore * 100) : 0}% nama</strong>
+        <strong>Vector visual: ${v}%</strong> · <strong>Fingerprint foto: ${f}%</strong> · <strong>Nama: ${n}%</strong>
         <br>
         Produk yang ditemukan: <strong>${escapeHtml(match.product.name || "-")}</strong>
         <br><br>
-        Produk baru <strong>tidak disimpan</strong> agar database tidak berisi produk yang sama/mirip.
-        <br><br>AI sekarang membandingkan <strong>bentuk/layout + foto grayscale + embedding visual</strong>, jadi perubahan warna atau background tidak langsung membuat produk dianggap baru.
+        <strong>Keputusan AI: TIDAK DISIMPAN.</strong>
+        <br>
+        MobileNet/vector tidak lagi boleh memblokir sendirian. Produk diblokir karena ada minimal dua sinyal yang saling menguatkan (visual + fingerprint), atau satu sinyal yang benar-benar sangat kuat.
         ${match.product.image_url ? `
           <br>
           <img
@@ -1455,20 +1478,16 @@ Komisi: 5%"></textarea>
 
       const bestMatch = await findSimilarExistingProduct(imageFile, name);
 
-      // V10.3: blokir jika sinyal visual menunjukkan produk yang sama/sangat mirip.
-      // Threshold dibuat agresif, tetapi tidak hanya mengandalkan MobileNet.
-      if (bestMatch && (
-        bestMatch.score >= 0.60 ||
-        bestMatch.fingerprintScore >= 0.68 ||
-        (bestMatch.vectorScore >= 0.38 && bestMatch.fingerprintScore >= 0.52) ||
-        (bestMatch.nameScore >= 0.90 && bestMatch.vectorScore >= 0.45) ||
-        (bestMatch.nameScore >= 0.55 && bestMatch.vectorScore >= 0.54)
-      )) {
+      // V10.6: JANGAN memblokir hanya karena MobileNet/vector terlihat mirip.
+      // Harus ada dua sinyal visual yang saling menguatkan agar produk benar-benar diblokir.
+      if (bestMatch && isLikelyDuplicate(bestMatch)) {
         renderDuplicateWarning(bestMatch);
         return;
       }
 
-      const similarMatch = bestMatch && bestMatch.score >= 0.45 ? bestMatch : null;
+      const similarMatch = bestMatch && (bestMatch.vectorScore >= 0.55 || bestMatch.fingerprintScore >= 0.55)
+        ? bestMatch
+        : null;
 
       // Di bawah ambang duplicate, produk tetap boleh disimpan.
       // Upload foto utama produk
